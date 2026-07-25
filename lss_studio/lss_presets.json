@@ -1,0 +1,69 @@
+{
+  "_comment": "Edit this file to add or change presets. Restart the app to pick up changes. 'accent2' optional. 'geometry' is 'steps' or 'curves'. 'suffix' is appended to the series name. 'cycle' is a list of colours the played line runs through, changing every 'cycle_minutes'.",
+  "series": {
+    "Sounds of the City": {
+      "name": "SOUNDS OF THE CITY",
+      "accent": "#CF7A34",
+      "geometry": "steps"
+    },
+    "Sounds in Spaces": {
+      "name": "SOUNDS IN SPACES",
+      "accent": "#45A6A0",
+      "geometry": "steps"
+    },
+    "Sounds of Nature": {
+      "name": "SOUNDS OF NATURE",
+      "accent": "#86A65C",
+      "geometry": "curves"
+    },
+    "Sounds in Towns": {
+      "name": "SOUNDS IN TOWNS",
+      "accent": "#6E8CAE",
+      "geometry": "steps"
+    }
+  },
+  "themes": {
+    "None (use series colour)": {},
+    "4th of July": {
+      "accent": "#ED574C",
+      "accent2": "#418AEC",
+      "suffix": "SPECIAL EDITION",
+      "cycle": [
+        "#ED574C",
+        "#FFFFFF",
+        "#418AEC"
+      ],
+      "cycle_minutes": 3
+    },
+    "Christmas": {
+      "accent": "#ED574C",
+      "accent2": "#10A035",
+      "suffix": "SPECIAL EDITION",
+      "cycle": [
+        "#ED574C",
+        "#10A035"
+      ],
+      "cycle_minutes": 3
+    },
+    "New Year": {
+      "accent": "#D9A441",
+      "accent2": "#B8C4CC",
+      "suffix": "SPECIAL EDITION"
+    },
+    "St Patrick's": {
+      "accent": "#10A016",
+      "accent2": "#D9A441",
+      "suffix": "SPECIAL EDITION"
+    },
+    "Thanksgiving": {
+      "accent": "#E66117",
+      "accent2": "#C79A3A",
+      "suffix": "SPECIAL EDITION"
+    },
+    "Halloween": {
+      "accent": "#E08A2B",
+      "accent2": "#AA6DF1",
+      "suffix": "SPECIAL EDITION"
+    }
+  }
+}

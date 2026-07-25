@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+lss_studio/previous/
+lss_studio/_work/
+*.mp4
+*.wav
+*.flac
