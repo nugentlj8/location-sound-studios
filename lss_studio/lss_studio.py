@@ -211,8 +211,9 @@ class App:
         self.root.after(400, self._check_updates)
 
     def _check_updates(self):
-        if lss_update is None:
+        if lss_update is None or getattr(self, "_update_checked", False):
             return
+        self._update_checked = True
         import threading
         def worker():
             try:
@@ -301,7 +302,6 @@ class App:
                 self.say("\nFAILED: " + payload)
                 messagebox.showerror("Render failed", payload)
         self.root.after(120, self.drain)
-        self.root.after(400, self._check_updates)
 
 
     # ---------- render ----------
@@ -323,15 +323,29 @@ class App:
 
     def _offer_update(self, version):
         from tkinter import messagebox
+        if getattr(self, "_update_offered", False):
+            return
+        self._update_offered = True
         if messagebox.askyesno(
                 "Update available",
                 f"Version {version} is available (you have "
                 f"{lss_update.local_version()}).\n\nUpdate now? The app will "
-                "use the new version next time you open it."):
+                "restart itself when it's done."):
             ok = lss_update.update(log=lambda m: self.q.put(("log", m)))
             if ok:
                 messagebox.showinfo("Updated",
-                    "Update installed. Close and reopen the app to use it.")
+                    "Update installed. The app will now restart.")
+                self._relaunch()
+
+    def _relaunch(self):
+        """Restart the app so the new code is loaded."""
+        import subprocess
+        try:
+            subprocess.Popen([sys.executable, os.path.abspath(__file__)])
+        except Exception:
+            pass
+        self.root.destroy()
+        os._exit(0)
 
     def start_render(self):
         if self.busy:
