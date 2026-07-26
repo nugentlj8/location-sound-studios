@@ -338,12 +338,23 @@ class App:
                 self._relaunch()
 
     def _relaunch(self):
-        """Restart the app so the new code is loaded."""
+        """Restart the app so the new code is loaded, without a console window."""
         import subprocess
+        exe = sys.executable
+        # if launched via python.exe, prefer pythonw.exe so no console appears
+        if exe.lower().endswith("python.exe"):
+            pw = exe[:-len("python.exe")] + "pythonw.exe"
+            if os.path.exists(pw):
+                exe = pw
         try:
-            subprocess.Popen([sys.executable, os.path.abspath(__file__)])
+            flags = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW
+            subprocess.Popen([exe, os.path.abspath(__file__)],
+                             creationflags=flags)
         except Exception:
-            pass
+            try:
+                subprocess.Popen([exe, os.path.abspath(__file__)])
+            except Exception:
+                pass
         self.root.destroy()
         os._exit(0)
 
@@ -416,7 +427,69 @@ class App:
             self.q.put(("error", traceback.format_exc(limit=3)))
 
 
+def _find_icon(name):
+    here = os.path.dirname(os.path.abspath(__file__))
+    for cand in (os.path.join(here, name),
+                 os.path.join(os.path.dirname(here), name)):
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+def _set_taskbar_identity(root):
+    """Make Windows show our icon in the taskbar, not the Python logo."""
+    # 1. distinct AppUserModelID so we are not grouped under python.exe
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "LocationSoundStudios.App")
+    except Exception:
+        pass
+
+    # 2. title-bar icon via the .ico (tkinter's own mechanism)
+    ico = _find_icon("LSS.ico")
+    if ico:
+        try:
+            root.iconbitmap(default=ico)
+        except Exception:
+            pass
+
+    # 3. force the TASKBAR button icon through Win32. tkinter's iconbitmap
+    #    often does not reach the taskbar, so load the .ico straight onto the
+    #    window handle with WM_SETICON. This is what actually replaces the
+    #    Python logo on the taskbar.
+    if ico and os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            root.update_idletasks()          # ensure the HWND exists
+            hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+            if not hwnd:
+                hwnd = root.winfo_id()
+            IMAGE_ICON = 1
+            LR_LOADFROMFILE = 0x00000010
+            LR_DEFAULTSIZE = 0x00000040
+            WM_SETICON = 0x0080
+            ICON_SMALL, ICON_BIG = 0, 1
+            user32 = ctypes.windll.user32
+            for size, which in ((16, ICON_SMALL), (32, ICON_BIG)):
+                hicon = user32.LoadImageW(None, ico, IMAGE_ICON, size, size,
+                                          LR_LOADFROMFILE)
+                if hicon:
+                    user32.SendMessageW(hwnd, WM_SETICON, which, hicon)
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
     root = tk.Tk()
+    _set_taskbar_identity(root)
+    png = _find_icon("icon_master.png")
+    if png:
+        try:
+            root._icon_img = tk.PhotoImage(file=png)
+            root.iconphoto(True, root._icon_img)
+        except Exception:
+            pass
     App(root)
     root.mainloop()
