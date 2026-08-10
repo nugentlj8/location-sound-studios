@@ -24,6 +24,21 @@ setx LSS_FONT "C:\Users\YOU\AppData\Local\Microsoft\Windows\Fonts\BarlowCondense
 
 Open a fresh window afterward. Without it the app falls back to Arial.
 
+## The window
+
+The audio file and the output folder sit at the top, and **Render**, **Thumbnail only** and
+**Preview at** sit at the bottom, always visible. Everything else is on four tabs, grouped by what
+it decides:
+
+| Tab | What it decides |
+|---|---|
+| **Slate** | what the frame says — place, city, conditions, date, start time, number, file name |
+| **Look** | colour and silhouette — series, style, detail, occasion, colours, custom colours |
+| **Shape** | how loudness becomes height — scaling, dynamics, tower width, stacked rows |
+| **Video** | the encode only — resolution and chroma. Thumbnail only skips all of it |
+
+`lss_render.py --help` is grouped the same way.
+
 ## Silhouettes
 
 Each series is set in a **scene**, and the scene decides which silhouettes it can wear. Pick one
@@ -82,17 +97,23 @@ resolution differs. Tower width stays the control for `blocks`.
 
 ### Checking a look without an encode
 
-`--progress` renders the thumbnail as a mid-playback frame instead of the unplayed state, so you
-can see the fill behaviour without waiting for a full video:
+Tick **Thumbnail only** and set **Preview at** to a percentage — or `--thumb-only --progress 0.5`
+from the command line — and the thumbnail is drawn as a mid-playback frame instead of the unplayed
+state, so you can see the fill behaviour in seconds rather than waiting for a full video:
 
 ```
 py lss_studio\lss_render.py recording.flac --style mountains_forest --thumb-only --progress 0.5 ...
 ```
 
-Two further switches change the treatment. `--tree-ahead faint|outline` sets how a tree looks
-before the playhead reaches it, and `--mountain-face twotone|outline` whether the mountain faces
-carry flat lit and shadow tones or only a ridgeline. The first of each is the default; `outline`
-on both gives a lighter, more linear frame.
+Both controls sit beside the Render button, outside the tabs, since they decide what actually gets
+made. Leave Preview at blank for the unplayed frame.
+
+Two further switches change the treatment. **Trees before the playhead** (`--tree-ahead
+faint|outline`) sets how a tree looks before the playhead reaches it, and **Mountain faces**
+(`--mountain-face twotone|outline`) whether the mountain faces carry flat lit and shadow tones or
+only a ridgeline. The first of each is the default; `outline` on both gives a lighter, more linear
+frame. In the window each greys out for a silhouette it does not reach — `blocks` has no trees to
+draw faint, `forest` has no mountain faces.
 
 ## Colours
 
@@ -125,10 +146,10 @@ preset chose, so Night + 4th of July is still the red/white/blue cycle over a ni
 
 ### Custom colours
 
-The four **Custom** rows — sky, silhouette, accent, accent 2 — override whichever preset is
-chosen. Leave one blank and it follows the preset; leave the silhouette blank in particular and it
-picks whichever of bone or ink stays readable on your sky, so a custom background can never render
-the skyline invisible.
+The three **Custom** rows — sky, silhouette, accent — override whichever preset is chosen. Leave
+one blank and it follows the preset; leave the silhouette blank in particular and it picks
+whichever of bone or ink stays readable on your sky, so a custom background can never render the
+skyline invisible.
 
 Each row has a dropdown of every colour the presets, series and occasions already use, named and
 with its hex — "Canopy sky #357A2B", "Night sky #13232E" — so a look can be built out of colours
@@ -137,7 +158,7 @@ still works and switches the dropdown to **Custom…**. Type a code that happens
 named colours and the dropdown says so. The swatch beside each box shows the colour you'll get.
 
 The list is read from the presets themselves, so a colour preset you add to `COLOR_PRESETS` or a
-series you add to `lss_presets.json` appears in all four dropdowns with no further work.
+series you add to `lss_presets.json` appears in all three dropdowns with no further work.
 
 To add your own preset, edit `COLOR_PRESETS` at the top of `lss_studio/lss_presets.py` — nothing
 in the render code needs touching. You can also add a `"colors"` block to `lss_presets.json`,
@@ -188,6 +209,24 @@ correctly past episode 9:
 
 Leave the number blank and folders are named the way they always were. Either way an existing
 folder is never overwritten — a repeat render becomes `..._2`.
+
+## Command line
+
+`py lss_studio\lss_render.py --help` lists every flag, grouped as **slate**, **look**, **shape**
+and **output** — the same four groups the window uses.
+
+Two things changed in 1.3.0:
+
+- **`--preset` is now `--series`.** It always chose a series, while `--colors` chooses a colour
+  preset, so "preset" meant two different things. `--preset` still works and always will; nothing
+  you have written needs updating.
+- **`--accent2` is gone.** Nothing ever drew with it — the playhead's second colour comes from an
+  occasion's `cycle`, not from `accent2`. A script passing `--accent2` will now error; drop the
+  flag and the render is identical. An `"accent2"` in your `lss_presets.json` is still read
+  without complaint, and those colours are still offered in the colour dropdowns as that preset's
+  "highlight".
+
+The render sidecar's `colors` field is likewise now `color_preset`. Older sidecars are unaffected.
 
 ## Updates
 

@@ -4,7 +4,7 @@ Everything is drawn at SS times the final size and downsampled with LANCZOS,
 which gives clean antialiasing on curves and text without a vector backend.
 """
 
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 
 SS = 2
 
@@ -76,20 +76,6 @@ def draw_line(dr, y0, amp, lv, W, col, sw, mode="steps"):
         x += w
 
 
-def add_glow(img, rows, lv, W, col, sw, mode, radius, opacity=0.5):
-    """Blur a copy of the lines and screen it back over the image."""
-    import numpy as np
-    layer = Image.new("RGB", img.size, (0, 0, 0))
-    ld = ImageDraw.Draw(layer)
-    for y0, amp in rows:
-        draw_line(ld, y0, amp, lv, W, col, sw * 1.9, mode)
-    layer = layer.filter(ImageFilter.GaussianBlur(radius * SS))
-    a = np.asarray(img).astype("float32")
-    b = np.asarray(layer).astype("float32") * opacity
-    out = 255.0 - (255.0 - a) * (255.0 - b) / 255.0
-    return Image.fromarray(out.clip(0, 255).astype("uint8"))
-
-
 def text_run(dr, s, size, tracking, x, baseline, col, font_path):
     """Per-glyph placement so tracking is exact. Returns the ending x."""
     f = ImageFont.truetype(font_path, max(1, int(round(size * SS))))
@@ -119,17 +105,6 @@ def finish(img, W, H, path):
 
 def solid_mask(W, H, path):
     Image.new("RGB", (W, H), (255, 255, 255)).save(path)
-    return path
-
-
-def ramp_mask(W, H, path, band_frac=0.32, gamma=1.6):
-    """Black, ramping to white over the last band before the right edge."""
-    import numpy as np
-    band = max(1, int(W * band_frac))
-    row = np.zeros(W, dtype=np.float32)
-    row[W - band:] = (np.linspace(0, 1, band, dtype=np.float32) ** gamma) * 255.0
-    arr = np.repeat(row[None, :], H, axis=0).astype("uint8")
-    Image.fromarray(np.dstack([arr] * 3)).save(path)
     return path
 
 

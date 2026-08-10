@@ -1,5 +1,5 @@
 {
-  "_comment": "Edit this file to add or change presets. Restart the app to pick up changes. 'accent2' optional. 'geometry' is 'steps' or 'curves'. 'scene' is 'town' or 'nature' and decides which silhouette styles the series can use - omit it and it is worked out from the series name, then from the geometry. 'suffix' is appended to the series name. 'cycle' is a list of colours the played line runs through, changing every 'cycle_minutes'.",
+  "_comment": "Edit this file to add or change presets. Restart the app to pick up changes. 'accent2' is optional and is not drawn - it is offered in the colour dropdowns as that preset's 'highlight'. 'geometry' is 'steps' or 'curves'. 'scene' is 'town' or 'nature' and decides which silhouette styles the series can use - omit it and it is worked out from the series name, then from the geometry. 'suffix' is appended to the series name. 'cycle' is a list of colours the played line runs through, changing every 'cycle_minutes'.",
   "series": {
     "Sounds of the City": {
       "name": "SOUNDS OF THE CITY",

@@ -80,11 +80,15 @@ COLOR_PRESETS = {
 
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
-# The four colour slots a preset can fill, in the order they sit on screen -
-# sky behind, silhouette in front, then the accents the playhead reveals. Used
-# to name the colours in palette() below.
+# The colour slots a preset can fill, in the order they sit on screen - sky
+# behind, silhouette in front, then the accent the playhead reveals. Used to
+# name the colours in palette() below.
+#
+# "accent2" is not a render setting; nothing draws with it. It survives as a
+# companion colour that was chosen alongside the other three, which makes it
+# worth offering in the picker - hence "highlight" rather than "accent 2".
 COLOR_ROLES = (("background", "sky"), ("foreground", "skyline"),
-               ("accent", "accent"), ("accent2", "accent 2"))
+               ("accent", "accent"), ("accent2", "highlight"))
 
 
 def load():
@@ -147,10 +151,10 @@ def palette(presets):
             add(f"{name} {role}", p.get(key, ""))
     for name, s in (presets.get("series") or {}).items():
         add(name, s.get("accent", ""))
-        add(f"{name} accent 2", s.get("accent2", ""))
+        add(f"{name} highlight", s.get("accent2", ""))
     for name, t in (presets.get("themes") or {}).items():
         add(name, t.get("accent", ""))
-        add(f"{name} accent 2", t.get("accent2", ""))
+        add(f"{name} highlight", t.get("accent2", ""))
         for i, c in enumerate(t.get("cycle") or [], 1):
             add(f"{name} cycle {i}", c)
     return out
@@ -172,12 +176,6 @@ def contrast(a, b):
 def contrast_on(h, bg=DEFAULT_BG):
     """WCAG contrast ratio of a colour against a given background."""
     return contrast(h, bg)
-
-
-def contrast_on_ink(h):
-    """Contrast against the default ink sky. Kept for callers that predate
-    custom backgrounds."""
-    return contrast(h, DEFAULT_BG)
 
 
 def auto_foreground(bg):
@@ -225,30 +223,26 @@ def theme_extras(theme_key, presets):
 
 
 def resolve(series_key, theme_key, presets, custom=None):
-    """Return (series_name, accent, accent2). custom overrides everything."""
+    """Return (series_name, accent). custom overrides everything."""
     s = presets["series"].get(series_key) or list(presets["series"].values())[0]
-    name, accent, accent2 = s["name"], s["accent"], s.get("accent2", "")
+    name, accent = s["name"], s["accent"]
     t = presets["themes"].get(theme_key) or {}
     if t.get("accent"):
         accent = t["accent"]
-        accent2 = t.get("accent2", "")
     suffix = t.get("suffix", "")
     if suffix:
         name = f"{name} {suffix}"
-    if custom:
-        if valid_hex(custom.get("accent", "")):
-            accent = custom["accent"].strip()
-        if custom.get("accent2", "").strip():
-            accent2 = custom["accent2"].strip() if valid_hex(custom["accent2"]) else accent2
-    return name, accent, accent2
+    if custom and valid_hex(custom.get("accent", "")):
+        accent = custom["accent"].strip()
+    return name, accent
 
 
 def color_preset(preset_key, presets):
     return (presets.get("colors") or COLOR_PRESETS).get(preset_key) or {}
 
 
-def resolve_colors(preset_key, theme_key, presets, accent, accent2="", custom=None):
-    """Return (background, foreground, accent, accent2).
+def resolve_colors(preset_key, theme_key, presets, accent, custom=None):
+    """Return (background, foreground, accent).
 
     A colour preset owns the sky: it always supplies background and foreground.
     It only supplies the accent when no seasonal theme is doing so, since a
@@ -256,8 +250,8 @@ def resolve_colors(preset_key, theme_key, presets, accent, accent2="", custom=No
     'Night + 4th of July' is the holiday cycle over the night sky. Explicit
     custom colours beat everything.
 
-    `accent`/`accent2` come in already resolved by resolve(), so a theme has
-    had its say by the time we get here; theme_sets_accent says whether it did.
+    `accent` comes in already resolved by resolve(), so a theme has had its say
+    by the time we get here; theme_sets_accent says whether it did.
     """
     p = color_preset(preset_key, presets)
     theme_sets_accent = bool((presets["themes"].get(theme_key) or {}).get("accent"))
@@ -266,7 +260,6 @@ def resolve_colors(preset_key, theme_key, presets, accent, accent2="", custom=No
     foreground = p.get("foreground") or ""
     if p.get("accent") and not theme_sets_accent:
         accent = p["accent"]
-        accent2 = p.get("accent2", "")
 
     custom = custom or {}
     if valid_hex(custom.get("background", "")):
@@ -275,7 +268,5 @@ def resolve_colors(preset_key, theme_key, presets, accent, accent2="", custom=No
         foreground = custom["foreground"].strip()
     if valid_hex(custom.get("accent", "")):
         accent = custom["accent"].strip()
-    if valid_hex(custom.get("accent2", "")):
-        accent2 = custom["accent2"].strip()
 
-    return background, foreground or auto_foreground(background), accent, accent2
+    return background, foreground or auto_foreground(background), accent

@@ -36,6 +36,11 @@ DETAIL_RANGE = (0.40, 2.50)
 # First entry is the default in both cases.
 TREE_AHEAD = ["faint", "outline"]       # how an unplayed tree is drawn
 MOUNTAIN_FACE = ["twotone", "outline"]  # whether the faces carry a flat tone
+# ...and the styles each one actually reaches, so a caller can say so rather
+# than offer a control that would do nothing. A town's street trees are drawn
+# with the houses, not on the forest's schedule, so TREE_AHEAD misses them.
+TREE_AHEAD_STYLES = {"forest", "mountains_forest"}
+MOUNTAIN_FACE_STYLES = {"mountains", "mountains_forest"}
 
 # --- vertical layout, design units -----------------------------------------
 # The slate's "CITY . CONDITIONS" baseline sits at 360, i.e. half the frame, so

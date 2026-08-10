@@ -15,11 +15,8 @@ import lss_draw as D
 import lss_scene as scene_mod
 from PIL import Image, ImageDraw, ImageFont
 
-INK, BONE, CLAY, HOT = "#13232E", "#F0E7D6", "#CF7A34", "#F5C98A"
+INK, BONE = "#13232E", "#F0E7D6"     # the default sky, and what reads on it
 FONT = None                      # resolved at runtime
-# The loudness-to-height mapping lives in lss_scene so the towers, the mountain
-# summits and the treeline all answer to the same --scale and --dynamics.
-LO_DB, HI_DB = scene_mod.LO_DB, scene_mod.HI_DB
 
 DEFAULT_OUT = r"Z:\Sounds of the City\LSS Renders"
 DEFAULT_IN = r"Z:\Sounds of the City\FLAC Export"
@@ -55,8 +52,9 @@ def default_outdir(presets=None):
         pass
     return DEFAULT_OUT
 LV_MIN, LV_MAX = -0.45, 0.95     # roofline level range
+# The loudness-to-height mapping itself lives in lss_scene, so the towers, the
+# mountain summits and the treeline all answer to the same --scale/--dynamics.
 DYNAMICS = scene_mod.DYNAMICS
-SKYGAMMA = scene_mod.SKYGAMMA
 # Fixed tower counts, independent of file length, so tower WIDTH is consistent
 # across every video. "Auto" grows slowly with duration but stays in a band
 # that always reads as a skyline.
@@ -86,10 +84,6 @@ def find_font():
         if os.path.exists(c):
             return c
     raise SystemExit("No font found. Set LSS_FONT to a .ttf path.")
-
-
-def font_name():
-    return "DejaVu Sans Condensed" if "DejaVu" in FONT else "sans-serif"
 
 
 # ----------------------------------------------------------------- audio
@@ -509,11 +503,11 @@ def _sidecar(cfg, lv, dur, scale, dyn, n):
             "geometry": cfg.get("geometry", "steps"),
             "rows": cfg.get("rows", 1),
             "filled": cfg.get("filled", False),
-            "colors": cfg.get("colors", ""),
+            # "colors" is the pre-1.3 name for the same value
+            "color_preset": cfg.get("color_preset") or cfg.get("colors", ""),
             "background": cfg.get("background", INK),
             "foreground": cfg.get("foreground", BONE),
             "accent": cfg.get("accent"),
-            "accent2": cfg.get("accent2", ""),
             "cycle": cfg.get("cycle", []),
             "cycle_minutes": cfg.get("cycle_minutes"),
             "slate_mono": cfg.get("slate_mono", False),
@@ -547,7 +541,9 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     cfg["background"] = cfg.get("background") or INK
     cfg["foreground"] = (cfg.get("foreground")
                          or presets_mod.auto_foreground(cfg["background"]))
-    base = cfg["outdir"]
+    # degrade an unmounted network path here rather than in the GUI, so the CLI
+    # stays usable off the studio's network too instead of dying in makedirs
+    base = usable(cfg["outdir"], "LSS Renders")
     os.makedirs(base, exist_ok=True)
 
     slug = output_base(cfg)
@@ -646,77 +642,104 @@ def main():
             pass
     a = argparse.ArgumentParser(description="Render a Location Sound Studios video.")
     a.add_argument("audio", nargs="?")
-    a.add_argument("--place")
-    a.add_argument("--city")
-    a.add_argument("--conditions")
-    a.add_argument("--date", help="YYYY-MM-DD")
-    a.add_argument("--start", help="e.g. 06:30 PM")
-    a.add_argument("--number", default="")
-    a.add_argument("--number-style", default="No.", choices=list(NUM_STYLES))
-    a.add_argument("--accent", default="")
-    a.add_argument("--accent2", default="")
-    a.add_argument("--background", default="",
-                   help="sky colour, e.g. #F2D289 - overrides --colors")
-    a.add_argument("--foreground", default="",
-                   help="silhouette and slate text colour, e.g. #2A2018. "
-                        "Defaults to whichever of bone or ink reads on the "
-                        "background")
-    a.add_argument("--colors", default="None (series colour)",
+
+    g = a.add_argument_group("slate", "what the frame says")
+    g.add_argument("--place")
+    g.add_argument("--city")
+    g.add_argument("--conditions")
+    g.add_argument("--date", help="YYYY-MM-DD")
+    g.add_argument("--start", help="e.g. 06:30 PM")
+    g.add_argument("--number", default="")
+    g.add_argument("--number-style", default="No.", choices=list(NUM_STYLES))
+
+    g = a.add_argument_group("look", "colour and silhouette")
+    g.add_argument("--series", "--preset", dest="series_key",
+                   metavar="NAME", default="Sounds of the City",
+                   help="which series to render. --preset is the old name")
+    g.add_argument("--theme", default="None (use series colour)",
+                   help="seasonal occasion: its accent and colour cycle sit on "
+                        "top of whichever sky --colors chose")
+    g.add_argument("--colors", dest="color_preset", metavar="PRESET",
+                   default="None (series colour)",
                    help="colour preset: Morning, Night, Evening, Canopy. Sets "
                         "background and foreground; supplies the accent unless "
                         "a --theme already does")
-    a.add_argument("--preset", default="Sounds of the City")
-    a.add_argument("--theme", default="None (use series colour)")
-    a.add_argument("--cycle-minutes", type=float, default=0.0)
-    a.add_argument("--list-presets", action="store_true")
-    a.add_argument("--outdir", default=None,
-                   help="where renders land. Falls back to LSS_OUTDIR, then an "
-                        '"outdir" key in lss_presets.json, then ' + DEFAULT_OUT)
-    a.add_argument("--width", type=int, default=2560)
-    a.add_argument("--height", type=int, default=1440)
-    a.add_argument("--fps", type=int, default=10)
-    a.add_argument("--towers", default="Default",
-                   choices=list(TOWERS) + ["Auto"],
-                   help="tower width: Thick, Default, Thin, Fine, or Auto")
-    a.add_argument("--dynamics", default="More", choices=list(DYNAMICS))
-    a.add_argument("--scale", default="Skyline (rank)", choices=SCALES)
-    a.add_argument("--style", default="",
+    g.add_argument("--background", default="",
+                   help="sky colour, e.g. #F2D289 - overrides --colors")
+    g.add_argument("--foreground", default="",
+                   help="silhouette and slate text colour, e.g. #2A2018. "
+                        "Defaults to whichever of bone or ink reads on the "
+                        "background")
+    g.add_argument("--accent", default="",
+                   help="the colour the playhead reveals")
+    g.add_argument("--cycle-minutes", type=float, default=0.0,
+                   help="override how often a theme's colour cycle steps")
+    g.add_argument("--style", default="",
                    help="silhouette shape. nature: "
                         + ", ".join(scene_mod.SCENE_STYLES["nature"])
                         + "; town: " + ", ".join(scene_mod.SCENE_STYLES["town"])
                         + ". Defaults to the series' own (topo or blocks)")
-    a.add_argument("--detail", default="Default",
+    g.add_argument("--detail", default="Default",
                    help="how much shape the silhouette styles carry: "
                         + ", ".join(scene_mod.DETAIL) + ", or a number like "
                         "1.2. Counts features, not pixels, so a thumbnail and "
                         "the video read the same")
-    a.add_argument("--tree-ahead", default=scene_mod.TREE_AHEAD[0],
+    g.add_argument("--tree-ahead", default=scene_mod.TREE_AHEAD[0],
                    choices=scene_mod.TREE_AHEAD,
-                   help="how a tree looks before the playhead reaches it")
-    a.add_argument("--mountain-face", default=scene_mod.MOUNTAIN_FACE[0],
+                   help="how a tree looks before the playhead reaches it "
+                        "(--style " + ", ".join(sorted(scene_mod.TREE_AHEAD_STYLES))
+                        + " only)")
+    g.add_argument("--mountain-face", default=scene_mod.MOUNTAIN_FACE[0],
                    choices=scene_mod.MOUNTAIN_FACE,
                    help="outline: ridgeline only; twotone: flat lit and shadow "
                         "faces, kept washed toward the sky so the trees stay "
-                        "the thing that reads as progress")
-    a.add_argument("--progress", type=float, default=0.0,
+                        "the thing that reads as progress (--style "
+                        + ", ".join(sorted(scene_mod.MOUNTAIN_FACE_STYLES)) + " only)")
+    g.add_argument("--filled", action="store_true",
+                   help="solid silhouette instead of outlines")
+    g.add_argument("--slate-mono", action="store_true",
+                   help="draw the small slate text in the silhouette colour, "
+                        "not the accent")
+
+    g = a.add_argument_group("shape", "how loudness becomes height")
+    g.add_argument("--scale", default="Skyline (rank)", choices=SCALES)
+    g.add_argument("--dynamics", default="More", choices=list(DYNAMICS),
+                   help="no effect on --scale 'Fixed loudness'")
+    g.add_argument("--towers", default="Default",
+                   choices=list(TOWERS) + ["Auto"],
+                   help="tower width, for --style blocks: Thick, Default, "
+                        "Thin, Fine, or Auto")
+    g.add_argument("--rows", type=int, default=1, choices=[1, 2, 3, 4, 5],
+                   help="stacked envelope rows. Not available for the "
+                        "generative silhouette styles")
+    g.add_argument("--height-stat", default="peak", choices=["peak", "rms"],
+                   help="peak: height = loudest moment in the block (shows "
+                        "brief events); rms: block average (old)")
+    g.add_argument("--no-align", action="store_true",
+                   help="don't snap tall features onto loud moments")
+
+    g = a.add_argument_group("output", "where it lands and how it encodes")
+    g.add_argument("--outdir", default=None,
+                   help="where renders land. Falls back to LSS_OUTDIR, then an "
+                        '"outdir" key in lss_presets.json, then ' + DEFAULT_OUT)
+    g.add_argument("--outname", default="",
+                   help="name the render folder and files. Defaults to --place")
+    g.add_argument("--thumb-only", action="store_true",
+                   help="render just the thumbnail - no video encode")
+    g.add_argument("--progress", type=float, default=0.0,
                    help="render the thumbnail as a mid-playback frame, 0-1, "
                         "instead of the unplayed state")
-    a.add_argument("--rows", type=int, default=1, choices=[1, 2, 3, 4, 5])
-    a.add_argument("--filled", action="store_true")
-    a.add_argument("--outname", default="")
-    a.add_argument("--height-stat", default="peak", choices=["peak", "rms"],
-                   help="peak: tower height = loudest moment in the block "
-                        "(shows brief events); rms: block average (old)")
-    a.add_argument("--no-align", action="store_true",
-                   help="don't snap tall towers onto loud moments")
-    a.add_argument("--thumb-only", action="store_true",
-                   help="render just the thumbnail - no video encode")
-    a.add_argument("--slate-mono", action="store_true",
-                   help="draw the small slate text in bone, not the accent colour")
-    a.add_argument("--thumb-width", type=int, default=1920)
-    a.add_argument("--full-chroma", action="store_true",
+    g.add_argument("--thumb-width", type=int, default=1920,
+                   help="thumbnail width in pixels; height follows at 16:9")
+    g.add_argument("--width", type=int, default=2560, help="video width")
+    g.add_argument("--height", type=int, default=1440, help="video height")
+    g.add_argument("--fps", type=int, default=10)
+    g.add_argument("--full-chroma", action="store_true",
                    help="encode 4:4:4 instead of 4:2:0 - much kinder to coloured "
                         "text, but an unusual profile; check the upload processes")
+
+    a.add_argument("--list-presets", action="store_true",
+                   help="print the available series, occasions and colours")
     n = a.parse_args()
     P = presets_mod.load()
     if n.list_presets:
@@ -733,25 +756,25 @@ def main():
     if missing:
         a.error("missing required: " + ", ".join("--"+m if m!="audio" else "audio"
                                                  for m in missing))
-    for flag in ("accent", "accent2", "background", "foreground"):
+    for flag in ("accent", "background", "foreground"):
         v = getattr(n, flag)
         if v and not presets_mod.valid_hex(v):
             a.error(f"--{flag}: '{v}' is not a colour like #CF7A34")
-    if n.colors not in presets_mod.color_preset_names(P):
-        a.error(f"--colors: unknown preset '{n.colors}'. Choose from: "
+    if n.color_preset not in presets_mod.color_preset_names(P):
+        a.error(f"--colors: unknown preset '{n.color_preset}'. Choose from: "
                 + ", ".join(presets_mod.color_preset_names(P)))
     cfg = vars(n)
-    custom = {"accent": n.accent, "accent2": n.accent2,
+    custom = {"accent": n.accent,
               "background": n.background, "foreground": n.foreground}
-    name, acc, acc2 = presets_mod.resolve(n.preset, n.theme, P, custom)
+    name, acc = presets_mod.resolve(n.series_key, n.theme, P, custom)
     cfg["series"] = name
-    bg, fg, acc, acc2 = presets_mod.resolve_colors(
-        n.colors, n.theme, P, acc, acc2, custom)
+    bg, fg, acc = presets_mod.resolve_colors(
+        n.color_preset, n.theme, P, acc, custom)
     cfg["background"], cfg["foreground"] = bg, fg
-    cfg["accent"], cfg["accent2"] = acc, acc2
+    cfg["accent"] = acc
     cfg["outdir"] = n.outdir or default_outdir(P)
-    cfg["geometry"] = presets_mod.series_geometry(n.preset, P)
-    cfg["scene"] = presets_mod.series_scene(n.preset, P)
+    cfg["geometry"] = presets_mod.series_geometry(n.series_key, P)
+    cfg["scene"] = presets_mod.series_scene(n.series_key, P)
     cfg["style"] = n.style or scene_mod.DEFAULT_STYLE.get(cfg["scene"], "blocks")
     err = scene_mod.check(cfg["scene"], cfg["style"], n.rows, n.filled,
                           n.progress)

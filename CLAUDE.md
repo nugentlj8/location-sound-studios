@@ -69,6 +69,11 @@ self-explanatory on reading):
 - **`lss_studio.py`** — the Tkinter GUI. Builds the config dict expected by `lss_render.run()` and
   calls it in a background thread, polling a `queue.Queue` on a Tk `after()` timer for log lines and
   progress. Not the place to add render logic — it's a thin form over `lss_render.run()`.
+  Settings live on a `ttk.Notebook` of four tabs — Slate, Look, Shape, Video — matching the four
+  argparse groups in `lss_render.main()`; put a new setting in the group that matches what it
+  decides, and in the same group on both sides. The audio/output fields and the Render button,
+  Thumbnail only and Preview at controls stay outside the tabs and always visible. Keep the form's
+  requested height under ~1000px or it clips on a laptop screen, which is what the tabs are for.
 
 Supporting pieces:
 - **`lss_presets.json`** — user-editable data, not code. Defines named "series" (each with a name,
@@ -93,6 +98,11 @@ and every running copy of the app picks it up on its next launch via `lss_update
 
 - Colours are `#RRGGBB` hex strings passed around as-is; `lss_draw.rgb()` converts to an `(r,g,b)`
   tuple only at the point of drawing.
+- A frame has exactly three colours: `background`, `foreground` and `accent`. `resolve()` and
+  `resolve_colors()` in `lss_presets.py` are the only place they are settled, and every caller goes
+  through them. An `accent2` in the preset data is **not** a fourth — nothing draws with it; it
+  survives only as a companion colour offered in the GUI's colour dropdowns (`palette()`), which
+  are likewise derived from the preset data rather than listed by hand.
 - Design coordinates are fixed at a 1280x720 basis and scaled by `k = W / 1280.0` everywhere in
   `compose()` — when adjusting layout, change the design-unit constant, not per-resolution numbers.
 - `usable()` in `lss_render.py` degrades a configured network drive path (`Z:\...`) to a folder in

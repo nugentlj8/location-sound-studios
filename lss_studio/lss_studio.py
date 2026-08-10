@@ -32,7 +32,6 @@ PALETTE_HEX = dict(PALETTE)                      # label -> colour
 PALETTE_NAME = {h: l for l, h in PALETTE}        # colour -> label
 CUSTOM = "Custom…"
 
-SCALES = ["Skyline (rank)", "Auto (percentile)", "Fixed loudness"]
 SIZES = {"1440p (recommended)": (2560, 1440),
          "2160p / 4K": (3840, 2160),
          "1080p": (1920, 1080)}
@@ -57,7 +56,7 @@ class App:
         self.root = root
         root.title("Location Sound Studios")
         root.configure(bg=BG)
-        root.minsize(680, 880)
+        root.minsize(760, 720)
         self.q = queue.Queue()
         self.busy = False
 
@@ -94,6 +93,11 @@ class App:
                      borderwidth=0, padding=9)
         st.configure("Horizontal.TProgressbar", background=ACC,
                      troughcolor=FIELD, borderwidth=0, thickness=10)
+        st.configure("TNotebook", background=BG, borderwidth=0, tabmargins=0)
+        st.configure("TNotebook.Tab", background=FIELD, foreground=FG,
+                     borderwidth=0, padding=(16, 8))
+        st.map("TNotebook.Tab", background=[("selected", BG)],
+               foreground=[("selected", ACC)])
 
         f = ttk.Frame(root, padding=18)
         f.pack(fill="both", expand=True)
@@ -105,49 +109,42 @@ class App:
             row=r, column=0, columnspan=3, sticky="w", pady=(0, 14))
         r += 1
 
+        # The audio in and the folder out stay above the tabs: they are the two
+        # things every render needs, and neither belongs to one group.
         self.audio = self._file_row(f, r, "Audio file", "Choose…", self.pick_audio)
-        r += 1
-        self.outname = self._entry(f, r, "Output file name", ""); r += 1
-        ttk.Label(f, text="Leave blank to name it after the place.",
-                  foreground="#7d93a3").grid(row=r, column=1, sticky="w", pady=(0, 6))
         r += 1
         self.outdir = self._file_row(f, r, "Output folder", "Choose…", self.pick_out)
         self.outdir.insert(0, lss_render.usable(lss_render.default_outdir(PRESETS),
                                                 "LSS Renders"))
         r += 1
 
-        ttk.Separator(f).grid(row=r, column=0, columnspan=3, sticky="ew", pady=12)
+        # Everything else is grouped by what it decides: what the frame SAYS,
+        # what it LOOKS like, what SHAPE the audio takes, and how the video
+        # encodes. The form was one 27-row column taller than a laptop screen.
+        nb = ttk.Notebook(f)
+        nb.grid(row=r, column=0, columnspan=3, sticky="nsew", pady=(16, 4))
         r += 1
+        slate, look, shape, video = (ttk.Frame(nb, padding=14) for _ in range(4))
+        for tab, title in ((slate, "Slate"), (look, "Look"),
+                           (shape, "Shape"), (video, "Video")):
+            tab.columnconfigure(1, weight=1)
+            nb.add(tab, text=title)
 
-        self.place = self._entry(f, r, "Place", "Roosevelt Row"); r += 1
-        self.city = self._entry(f, r, "City, State", "Phoenix, AZ"); r += 1
-        self.cond = self._entry(f, r, "Conditions", "Clear"); r += 1
-
+        # ---------- slate: what the frame says ----------
+        sr = 0
+        self.place = self._entry(slate, sr, "Place", "Roosevelt Row"); sr += 1
+        self.city = self._entry(slate, sr, "City, State", "Phoenix, AZ"); sr += 1
+        self.cond = self._entry(slate, sr, "Conditions", "Clear"); sr += 1
         today = datetime.date.today().isoformat()
-        self.date = self._entry(f, r, "Recording date", today); r += 1
-        self.start = self._entry(f, r, "Start time", "06:30 PM"); r += 1
-        ttk.Label(f, text="Time the published file begins — after any trimming.",
-                  foreground="#7d93a3").grid(row=r, column=1, sticky="w", pady=(0, 8))
-        r += 1
-
-        sn = lss_presets.series_names(PRESETS)
-        tn = lss_presets.theme_names(PRESETS)
-        cn = lss_presets.color_preset_names(PRESETS)
-        self.series = self._combo(f, r, "Series", sn, sn[0]); r += 1
-        # the silhouette a series can wear depends on the scene it is set in,
-        # so this list is rebuilt whenever the series changes
-        self.style = self._combo(f, r, "Silhouette", ["blocks"], "blocks"); r += 1
-        self.series.bind("<<ComboboxSelected>>", self._series_changed)
-        self._series_changed()
-        self.theme = self._combo(f, r, "Occasion", tn, tn[0]); r += 1
-        self.colors = self._combo(f, r, "Colours", cn, cn[0]); r += 1
-        ttk.Label(f, text="Sets the sky. The occasion keeps its own accent.",
-                  foreground="#7d93a3").grid(row=r, column=1, sticky="w", pady=(0, 6))
-        r += 1
-        ttk.Label(f, text="Number").grid(row=r, column=0, sticky="w",
-                                         padx=(0, 12), pady=4)
-        nf = ttk.Frame(f)
-        nf.grid(row=r, column=1, columnspan=2, sticky="ew", pady=4)
+        self.date = self._entry(slate, sr, "Recording date", today); sr += 1
+        self.start = self._entry(slate, sr, "Start time", "06:30 PM"); sr += 1
+        ttk.Label(slate, text="Time the published file begins — after any trimming.",
+                  foreground="#7d93a3").grid(row=sr, column=1, sticky="w", pady=(0, 8))
+        sr += 1
+        ttk.Label(slate, text="Number").grid(row=sr, column=0, sticky="w",
+                                             padx=(0, 12), pady=4)
+        nf = ttk.Frame(slate)
+        nf.grid(row=sr, column=1, columnspan=2, sticky="ew", pady=4)
         self.numstyle = ttk.Combobox(nf, values=list(lss_render.NUM_STYLES),
                                      state="readonly", width=18)
         self.numstyle.set("No.")
@@ -156,69 +153,119 @@ class App:
         self.number.pack(side="left", padx=(8, 0))
         ttk.Label(nf, text="  blank to hide it",
                   foreground="#7d93a3").pack(side="left")
-        r += 1
+        sr += 1
+        self.outname = self._entry(slate, sr, "Output file name", ""); sr += 1
+        ttk.Label(slate, text="Names the folder and files, not the frame. "
+                              "Blank uses the place.",
+                  foreground="#7d93a3").grid(row=sr, column=1, sticky="w", pady=(0, 6))
+        sr += 1
 
-        self.cust_bg = self._color_row(f, r, "Custom sky"); r += 1
-        self.cust_fg = self._color_row(f, r, "Custom silhouette"); r += 1
-        self.cust_a = self._color_row(f, r, "Custom accent"); r += 1
-        self.cust_b = self._color_row(f, r, "Custom accent 2"); r += 1
-        ttk.Label(f, text="Pick a colour already in use, or type #RRGGBB. "
-                          "Blank follows the colours above.",
-                  foreground="#7d93a3").grid(row=r, column=1, sticky="w", pady=(0, 6))
-        r += 1
-        self.size = self._combo(f, r, "Resolution", list(SIZES), list(SIZES)[0]); r += 1
-        self.scale = self._combo(f, r, "Height scaling", SCALES, SCALES[0]); r += 1
-        self.rows = self._combo(f, r, "Skylines",
-                                ["1", "2", "3", "4", "5"], "1"); r += 1
-        self.towers = self._combo(f, r, "Tower width",
-                                  ["Thick", "Default", "Thin", "Fine", "Auto"],
-                                  "Default"); r += 1
-        self.detail = self._combo(f, r, "Silhouette detail",
-                                  list(lss_scene.DETAIL), "Default"); r += 1
-        ttk.Label(f, text="How much shape the mountains, trees and houses "
-                          "carry. Tower width is for blocks.",
-                  foreground="#7d93a3").grid(row=r, column=1, sticky="w",
-                                             pady=(0, 6))
-        r += 1
-        self.dyn = self._combo(f, r, "Dynamics",
-                               ["Natural", "More", "Most"], "More"); r += 1
-        ttk.Label(f, text="Dynamics has no effect on Fixed loudness.",
-                  foreground="#7d93a3").grid(row=r, column=1, sticky="w", pady=(0, 6))
-        r += 1
-
-        self.thumbonly = tk.BooleanVar(value=False)
-        ttk.Checkbutton(f, text="Thumbnail only — skip the video encode",
-                        variable=self.thumbonly).grid(row=r, column=1, sticky="w", pady=6)
-        r += 1
-
-        self.mono = tk.BooleanVar(value=False)
-        ttk.Checkbutton(f, text="Monochrome slate (small text in bone, not accent)",
-                        variable=self.mono).grid(row=r, column=1, sticky="w", pady=6)
-        r += 1
-
-        self.chroma = tk.BooleanVar(value=False)
-        ttk.Checkbutton(f, text="Full colour detail (4:4:4) — verify it uploads OK",
-                        variable=self.chroma).grid(row=r, column=1, sticky="w", pady=6)
-        r += 1
-
+        # ---------- look: colour and silhouette ----------
+        sn = lss_presets.series_names(PRESETS)
+        tn = lss_presets.theme_names(PRESETS)
+        cn = lss_presets.color_preset_names(PRESETS)
+        lr = 0
+        self.series = self._combo(look, lr, "Series", sn, sn[0]); lr += 1
+        self.series.bind("<<ComboboxSelected>>", self._series_changed)
+        # the silhouette a series can wear depends on the scene it is set in,
+        # so this list is rebuilt whenever the series changes
+        self.style = self._combo(look, lr, "Silhouette", ["blocks"], "blocks"); lr += 1
+        self.style.bind("<<ComboboxSelected>>", self._style_changed)
+        self.detail = self._combo(look, lr, "Silhouette detail",
+                                  list(lss_scene.DETAIL), "Default"); lr += 1
+        ttk.Label(look, text="How much shape the mountains, trees and houses "
+                             "carry. Tower width is for blocks.",
+                  foreground="#7d93a3").grid(row=lr, column=1, sticky="w", pady=(0, 6))
+        lr += 1
+        self.ahead = self._combo(look, lr, "Trees before the playhead",
+                                 lss_scene.TREE_AHEAD, lss_scene.TREE_AHEAD[0])
+        lr += 1
+        self.face = self._combo(look, lr, "Mountain faces",
+                                lss_scene.MOUNTAIN_FACE, lss_scene.MOUNTAIN_FACE[0])
+        lr += 1
+        ttk.Label(look, text="Both grey out for a silhouette that has no "
+                             "trees or no mountains.",
+                  foreground="#7d93a3").grid(row=lr, column=1, sticky="w", pady=(0, 8))
+        lr += 1
+        self.theme = self._combo(look, lr, "Occasion", tn, tn[0]); lr += 1
+        self.colors = self._combo(look, lr, "Colours", cn, cn[0]); lr += 1
+        ttk.Label(look, text="Sets the sky. The occasion keeps its own accent.",
+                  foreground="#7d93a3").grid(row=lr, column=1, sticky="w", pady=(0, 6))
+        lr += 1
+        self.cust_bg = self._color_row(look, lr, "Custom sky"); lr += 1
+        self.cust_fg = self._color_row(look, lr, "Custom silhouette"); lr += 1
+        self.cust_a = self._color_row(look, lr, "Custom accent"); lr += 1
+        ttk.Label(look, text="Pick a colour already in use, or type #RRGGBB. "
+                             "Blank follows the colours above.",
+                  foreground="#7d93a3").grid(row=lr, column=1, sticky="w", pady=(0, 8))
+        lr += 1
         self.filled = tk.BooleanVar(value=False)
-        ttk.Checkbutton(f, text="Solid silhouette instead of outlines",
-                        variable=self.filled).grid(row=r, column=1, sticky="w", pady=6)
-        r += 1
+        ttk.Checkbutton(look, text="Solid silhouette instead of outlines",
+                        variable=self.filled).grid(row=lr, column=1, sticky="w", pady=4)
+        lr += 1
+        self.mono = tk.BooleanVar(value=False)
+        ttk.Checkbutton(look, text="Monochrome slate — small text in the "
+                                   "silhouette colour, not the accent",
+                        variable=self.mono).grid(row=lr, column=1, sticky="w", pady=4)
+        lr += 1
+        self._series_changed()          # now that ahead/face exist to be greyed
 
+        # ---------- shape: how loudness becomes height ----------
+        hr = 0
+        self.scale = self._combo(shape, hr, "Height scaling",
+                                 lss_render.SCALES, lss_render.SCALES[0]); hr += 1
+        self.dyn = self._combo(shape, hr, "Dynamics",
+                               list(lss_scene.DYNAMICS), "More"); hr += 1
+        ttk.Label(shape, text="Dynamics has no effect on Fixed loudness.",
+                  foreground="#7d93a3").grid(row=hr, column=1, sticky="w", pady=(0, 8))
+        hr += 1
+        self.towers = self._combo(shape, hr, "Tower width",
+                                  list(lss_render.TOWERS) + ["Auto"],
+                                  "Default"); hr += 1
+        self.rows = self._combo(shape, hr, "Stacked rows",
+                                ["1", "2", "3", "4", "5"], "1"); hr += 1
+        ttk.Label(shape, text="Both are for blocks and topo. A generative "
+                              "silhouette is one scene, not stacked rows.",
+                  foreground="#7d93a3").grid(row=hr, column=1, sticky="w", pady=(0, 8))
+        hr += 1
         self.peak = tk.BooleanVar(value=True)
-        ttk.Checkbutton(f, text="Tower height = loudest moment (not average)",
-                        variable=self.peak).grid(row=r, column=1, sticky="w", pady=6)
-        r += 1
-
+        ttk.Checkbutton(shape, text="Height = loudest moment (not average)",
+                        variable=self.peak).grid(row=hr, column=1, sticky="w", pady=4)
+        hr += 1
         self.align = tk.BooleanVar(value=True)
-        ttk.Checkbutton(f, text="Line up tall towers with loud moments",
-                        variable=self.align).grid(row=r, column=1, sticky="w", pady=6)
-        r += 1
+        ttk.Checkbutton(shape, text="Line up tall features with loud moments",
+                        variable=self.align).grid(row=hr, column=1, sticky="w", pady=4)
+        hr += 1
 
-        self.go = ttk.Button(f, text="Render", style="Go.TButton", command=self.start_render)
-        self.go.grid(row=r, column=1, sticky="w", pady=(14, 8))
+        # ---------- video: the encode only ----------
+        vr = 0
+        self.size = self._combo(video, vr, "Resolution",
+                                list(SIZES), list(SIZES)[0]); vr += 1
+        self.chroma = tk.BooleanVar(value=False)
+        ttk.Checkbutton(video, text="Full colour detail (4:4:4) — verify it "
+                                    "uploads OK",
+                        variable=self.chroma).grid(row=vr, column=1, sticky="w",
+                                                   pady=(8, 4))
+        vr += 1
+        ttk.Label(video, text="Thumbnail only skips everything on this tab.",
+                  foreground="#7d93a3").grid(row=vr, column=1, sticky="w", pady=(6, 0))
+        vr += 1
+
+        # ---------- always visible: render, and what to render ----------
+        act = ttk.Frame(f)
+        act.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(12, 6))
         r += 1
+        self.go = ttk.Button(act, text="Render", style="Go.TButton",
+                             command=self.start_render)
+        self.go.pack(side="left")
+        self.thumbonly = tk.BooleanVar(value=False)
+        ttk.Checkbutton(act, text="Thumbnail only — skip the video encode",
+                        variable=self.thumbonly).pack(side="left", padx=(16, 0))
+        ttk.Label(act, text="Preview at").pack(side="left", padx=(20, 6))
+        self.preview = ttk.Entry(act, width=5)
+        self.preview.pack(side="left")
+        ttk.Label(act, text="%  blank = unplayed",
+                  foreground="#7d93a3").pack(side="left", padx=(6, 0))
 
         self.bar = ttk.Progressbar(f, mode="determinate", maximum=1000)
         self.bar.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(4, 2))
@@ -227,7 +274,7 @@ class App:
         self.status.grid(row=r, column=0, columnspan=3, sticky="w", pady=(0, 6))
         r += 1
 
-        self.log = tk.Text(f, height=9, bg=FIELD, fg=FG, relief="flat",
+        self.log = tk.Text(f, height=7, bg=FIELD, fg=FG, relief="flat",
                            insertbackground=FG, wrap="word")
         self.log.grid(row=r, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
         f.rowconfigure(r, weight=1)
@@ -256,6 +303,15 @@ class App:
         cur = self.style.get()
         self.style["values"] = styles
         self.style.set(cur if cur in styles else lss_scene.DEFAULT_STYLE[scene])
+        self._style_changed()
+
+    def _style_changed(self, _evt=None):
+        """Grey out a treatment the chosen silhouette never reaches - blocks
+        has no trees to draw faint, and a forest has no mountain faces."""
+        s = self.style.get()
+        for w, styles in ((self.ahead, lss_scene.TREE_AHEAD_STYLES),
+                          (self.face, lss_scene.MOUNTAIN_FACE_STYLES)):
+            w.config(state="readonly" if s in styles else "disabled")
 
     # ---------- widget helpers ----------
     def _entry(self, f, r, label, default=""):
@@ -395,7 +451,21 @@ class App:
             datetime.datetime.strptime(self.start.get().strip().upper(), "%I:%M %p")
         except ValueError:
             return "Start time must look like 06:30 PM."
-        return None
+        return self._preview_frac()[1]
+
+    def _preview_frac(self):
+        """(fraction, error). --progress as a percentage, since that is how a
+        person says it. Blank means the unplayed frame, i.e. 0."""
+        s = self.preview.get().strip().rstrip("%").strip()
+        if not s:
+            return 0.0, None
+        try:
+            v = float(s)
+        except ValueError:
+            return 0.0, f"Preview must be a percentage like 50, not '{s}'."
+        if not 0 <= v <= 100:
+            return 0.0, "Preview must be between 0 and 100%."
+        return v / 100.0, None
 
     def _offer_update(self, version):
         from tkinter import messagebox
@@ -441,35 +511,34 @@ class App:
         if err:
             messagebox.showwarning("Check the form", err)
             return
-        custom = {"accent": self.cust_a.get(), "accent2": self.cust_b.get(),
+        custom = {"accent": self.cust_a.get(),
                   "background": self.cust_bg.get(), "foreground": self.cust_fg.get()}
         for val in custom.values():
             if val.strip() and not lss_presets.valid_hex(val):
                 messagebox.showwarning("Check the form",
                                        f"'{val}' is not a colour like #CF7A34.")
                 return
-        series_name, acc, acc2 = lss_presets.resolve(
+        series_name, acc = lss_presets.resolve(
             self.series.get(), self.theme.get(), PRESETS, custom)
-        bg, fg, acc, acc2 = lss_presets.resolve_colors(
-            self.colors.get(), self.theme.get(), PRESETS, acc, acc2, custom)
+        bg, fg, acc = lss_presets.resolve_colors(
+            self.colors.get(), self.theme.get(), PRESETS, acc, custom)
         geometry = lss_presets.series_geometry(self.series.get(), PRESETS)
         _suf, cyc, cmin = lss_presets.theme_extras(self.theme.get(), PRESETS)
         # Only second-guess colours typed in by hand. The built-in presets were
         # already chosen against measured contrast on rendered frames, and some
         # lean on hue rather than luminance, so warning about them every render
         # would be noise.
-        low = [c.strip() for c in (custom["accent"], custom["accent2"])
-               if c.strip() and lss_presets.contrast_on(c.strip(), bg) < 4.5]
-        if low:
+        hand = custom["accent"].strip()
+        if hand and lss_presets.contrast_on(hand, bg) < 4.5:
             if not messagebox.askyesno(
                     "Low contrast",
-                    "These colours are dim against the background and may look "
-                    "muddy at thumbnail size:\n\n  " + "  ".join(low) +
-                    "\n\nRender anyway?"):
+                    f"{hand} is dim against the background and may look muddy "
+                    "at thumbnail size.\n\nRender anyway?"):
                 return
         scene = lss_presets.series_scene(self.series.get(), PRESETS)
+        frac = self._preview_frac()[0]
         err = lss_scene.check(scene, self.style.get(), int(self.rows.get()),
-                              bool(self.filled.get()))
+                              bool(self.filled.get()), frac)
         if err:
             messagebox.showwarning("Check the form", err[0].upper() + err[1:])
             return
@@ -485,12 +554,14 @@ class App:
             "series": series_name,
             "number": self.number.get().strip(),
             "number_style": self.numstyle.get(),
-            "colors": self.colors.get(),
-            "accent": acc, "accent2": acc2,
+            "color_preset": self.colors.get(),
+            "accent": acc,
             "background": bg, "foreground": fg,
             "width": w, "height": h, "fps": 10, "geometry": geometry,
             "scene": scene, "style": self.style.get(),
             "detail": self.detail.get(),
+            "tree_ahead": self.ahead.get(), "mountain_face": self.face.get(),
+            "progress": frac,
             "cycle": cyc, "cycle_minutes": cmin,
             "towers": self.towers.get(), "dynamics": self.dyn.get(),
             "scale": self.scale.get(),
