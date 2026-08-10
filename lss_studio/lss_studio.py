@@ -347,8 +347,8 @@ class App:
         on = bool(self.thumbonly.get())
         self.variants.config(state="normal" if on else "disabled")
         self.vhint.config(
-            text="One thumbnail per colour, in one folder. None selected uses "
-                 "Colours above."
+            text="Renders Colours above plus each ticked colour — one "
+                 "thumbnail each, in one folder."
             if on else "Tick Thumbnail only to render several colours at once.")
 
     def _picked_variants(self):
@@ -630,8 +630,11 @@ class App:
             "number": self.number.get().strip(),
             "number_style": self.numstyle.get(),
             "color_preset": self.colors.get(),
-            "variants": lss_presets.variants(picks, self.theme.get(), PRESETS,
-                                             base_acc, custom),
+            # empty unless something is ticked, so a plain single render keeps
+            # its plain <slug>_thumb.png name
+            "variants": (lss_presets.variant_set(
+                self.colors.get(), picks, self.theme.get(), PRESETS,
+                base_acc, custom) if picks else []),
             "accent": acc,
             "background": bg, "foreground": fg,
             "width": w, "height": h, "fps": 10, "geometry": geometry,

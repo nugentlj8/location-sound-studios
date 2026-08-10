@@ -258,6 +258,18 @@ def variants(preset_keys, theme_key, presets, accent, custom=None):
     return out
 
 
+def variant_set(primary_key, extra_keys, theme_key, presets, accent, custom=None):
+    """The colours one comparison should render, the chosen one first.
+
+    The Colours choice is always in the set: the extras are picked to compare
+    AGAINST it, so dropping it would leave out the one look you started from.
+    Order-preserving and de-duplicated, so also ticking the primary in the list
+    costs nothing.
+    """
+    keys = [primary_key] + [k for k in extra_keys if k != primary_key]
+    return variants(keys, theme_key, presets, accent, custom)
+
+
 def resolve_colors(preset_key, theme_key, presets, accent, custom=None):
     """Return (background, foreground, accent).
 

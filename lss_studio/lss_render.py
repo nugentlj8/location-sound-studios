@@ -706,10 +706,10 @@ def main():
                         "background and foreground; supplies the accent unless "
                         "a --theme already does")
     g.add_argument("--variants", metavar="A,B,C", default="",
-                   help="render one thumbnail per colour preset in a single "
-                        "pass, e.g. 'Aurora,Canopy,Evening'. All land in one "
-                        "folder with the palette in each filename. Needs "
-                        "--thumb-only, and replaces --colors")
+                   help="extra colour presets to compare against --colors, "
+                        "e.g. 'Aurora,Canopy,Evening'. One thumbnail each plus "
+                        "one for --colors itself, all in one folder with the "
+                        "palette in each filename. Needs --thumb-only")
     g.add_argument("--background", default="",
                    help="sky colour, e.g. #F2D289 - overrides --colors")
     g.add_argument("--foreground", default="",
@@ -837,7 +837,8 @@ def main():
             a.error("--variants and --background conflict: the custom sky "
                     "would override every preset and they would all render "
                     "the same")
-        cfg["variants"] = presets_mod.variants(picks, n.theme, P, base_acc, custom)
+        cfg["variants"] = presets_mod.variant_set(n.color_preset, picks,
+                                                  n.theme, P, base_acc, custom)
     cfg["outdir"] = n.outdir or default_outdir(P)
     cfg["geometry"] = presets_mod.series_geometry(n.series_key, P)
     cfg["scene"] = presets_mod.series_scene(n.series_key, P)
