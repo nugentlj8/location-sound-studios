@@ -53,6 +53,10 @@ self-explanatory on reading):
      "bone"-coloured full frame, an accent-coloured ("clay") full frame, and a mask that slides left
      to right over the video's duration so the accent colour appears to "play across" the skyline in
      sync with elapsed time — this is what makes the timeline visually scrub as the clock advances.
+  5b. A `variants` list in cfg (from `lss_presets.variants()`, thumbnail-only) makes `run()` emit
+     one thumbnail per palette instead of one. It sits *after* the envelope, levels and geometry,
+     so N looks cost one audio pass and one `compose()` each — and share a silhouette exactly.
+     Filenames carry the palette; a folder of variants is otherwise unreviewable.
   6. `run()` is the orchestration entry point both the GUI and CLI call — writes the thumbnail, the
      video (unless `--thumb-only`), and a `<slug>_render.json` sidecar capturing every parameter used,
      so a past render can be understood or reproduced later. Output goes to a fresh
@@ -69,9 +73,9 @@ self-explanatory on reading):
 - **`lss_studio.py`** — the Tkinter GUI. Builds the config dict expected by `lss_render.run()` and
   calls it in a background thread, polling a `queue.Queue` on a Tk `after()` timer for log lines and
   progress. Not the place to add render logic — it's a thin form over `lss_render.run()`.
-  Settings live on a `ttk.Notebook` of four tabs — Slate, Look, Shape, Video — matching the four
-  argparse groups in `lss_render.main()`; put a new setting in the group that matches what it
-  decides, and in the same group on both sides. The audio/output fields and the Render button,
+  Settings live on a `ttk.Notebook` of five tabs — Slate, Look, Colour, Shape, Video — matching the
+  argparse groups in `lss_render.main()` (Look and Colour share the `look` group); put a new setting
+  in the group that matches what it decides, and in the same group on both sides. The audio/output fields and the Render button,
   Thumbnail only and Preview at controls stay outside the tabs and always visible. Keep the form's
   requested height under ~1000px or it clips on a laptop screen, which is what the tabs are for.
 

@@ -241,6 +241,23 @@ def color_preset(preset_key, presets):
     return (presets.get("colors") or COLOR_PRESETS).get(preset_key) or {}
 
 
+def variants(preset_keys, theme_key, presets, accent, custom=None):
+    """Several colour presets resolved against the same series, occasion and
+    custom colours - one entry per preset, in the order given.
+
+    Each entry is the three colours a frame actually has, so the caller renders
+    one thumbnail per entry off a single pass over the audio. Resolution goes
+    through resolve_colors() like everything else, which is what keeps a
+    variant identical to rendering that preset on its own.
+    """
+    out = []
+    for k in preset_keys:
+        bg, fg, acc = resolve_colors(k, theme_key, presets, accent, custom)
+        out.append({"name": k, "background": bg, "foreground": fg,
+                    "accent": acc})
+    return out
+
+
 def resolve_colors(preset_key, theme_key, presets, accent, custom=None):
     """Return (background, foreground, accent).
 

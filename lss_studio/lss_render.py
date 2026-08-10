@@ -368,6 +368,29 @@ def output_base(cfg):
     return f"{ep} - {name}".strip(" -") if name else ep
 
 
+def _thumbnail(cfg, lv, tw, th, out, work, frac=0.0):
+    """One thumbnail. Above 0, `frac` cuts the played and unplayed layers at a
+    fixed x instead of a moving one - a mid-playback frame without an encode."""
+    if frac > 0:
+        b = compose(cfg, lv, tw, th, cfg["foreground"],
+                    os.path.join(work, "_t_bone.png"), time_text=cfg["start"])
+        c = compose(cfg, lv, tw, th, cfg["accent"],
+                    os.path.join(work, "_t_clay.png"), time_text=cfg["start"],
+                    played=True)
+        return D.progress_composite(b, c, frac, out)
+    return compose(cfg, lv, tw, th, cfg["foreground"], out,
+                   time_text=cfg["start"])
+
+
+def variant_filename(slug, v):
+    """Palette baked into the name, because a folder of variants is otherwise
+    unreviewable: they differ only in colour, and two nearby skies are hard to
+    tell apart by eye once they are separate files."""
+    return (f"{slug}_thumb_{_safe_name(v['name']).replace(' ', '_')}"
+            f"_bg-{v['background'][1:]}_fg-{v['foreground'][1:]}"
+            f"_acc-{v['accent'][1:]}.png")
+
+
 def clock_box(W, H, sample="06:30 PM"):
     """Position and size for the live clock so it lands exactly where the
     thumbnail draws its static one."""
@@ -476,9 +499,16 @@ def build_video(cfg, paths, audio, dur, W, H, out, fps=10, crf=None,
 
 
 # ----------------------------------------------------------------- driver
-def _sidecar(cfg, lv, dur, scale, dyn, n):
+def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None):
     """Everything needed to understand or reproduce a render, saved beside it."""
     import datetime
+    if variants:
+        # the "look" block below describes the primary colours; this says which
+        # file got which palette, so a folder of variants stays self-describing
+        variants = [{"name": v["name"], "background": v["background"],
+                     "foreground": v["foreground"], "accent": v["accent"],
+                     "file": os.path.basename(v.get("file", ""))}
+                    for v in variants]
     return {
         "rendered_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "slate": {
@@ -524,6 +554,7 @@ def _sidecar(cfg, lv, dur, scale, dyn, n):
             "fps": cfg.get("fps", 10),
             "full_chroma": cfg.get("full_chroma", False),
         },
+        "variants": variants or [],
         "source_audio": os.path.basename(cfg.get("audio", "")),
         "duration_s": dur,
         "levels": lv,
@@ -585,32 +616,41 @@ def run(cfg, progress=lambda s: None, on_progress=None):
                  f"{len(cfg['_scene']['houses'])} houses "
                  f"(seed {cfg['_scene']['seed']:016x})")
 
-    progress("Building thumbnail…")
     tw = int(cfg.get("thumb_width", 1920))
     th = round(tw * 9 / 16)
-    thumb_path = os.path.join(outdir, f"{slug}_thumb.png")
     frac = float(cfg.get("progress", 0.0) or 0.0)
-    if frac > 0:
-        # the same two layers the video uses, cut at a fixed x instead of a
-        # moving one - a mid-playback frame without waiting for an encode
-        b = compose(cfg, lv, tw, th, cfg["foreground"],
-                    os.path.join(work, "_t_bone.png"), time_text=cfg["start"])
-        c = compose(cfg, lv, tw, th, cfg["accent"],
-                    os.path.join(work, "_t_clay.png"), time_text=cfg["start"],
-                    played=True)
-        thumb = D.progress_composite(b, c, frac, thumb_path)
+    # A variant set is for comparing looks, so it only runs without an encode -
+    # the callers reject the combination up front, this is the belt and braces.
+    variants = list(cfg.get("variants") or []) if cfg.get("thumb_only") else []
+
+    if variants:
+        # everything expensive - the audio pass, the levels, the geometry - is
+        # already done and shared, so each extra look costs one compose()
+        progress(f"Building {len(variants)} thumbnails…")
+        for i, v in enumerate(variants, 1):
+            vcfg = dict(cfg, background=v["background"],
+                        foreground=v["foreground"], accent=v["accent"])
+            v["file"] = _thumbnail(vcfg, lv, tw, th,
+                                   os.path.join(outdir, variant_filename(slug, v)),
+                                   work, frac)
+            progress(f"  {v['name']}: {os.path.basename(v['file'])}")
+            if on_progress:
+                on_progress(0.10 + 0.90 * i / len(variants), None)
+        thumbs = [v["file"] for v in variants]
     else:
-        thumb = compose(cfg, lv, tw, th, cfg["foreground"], thumb_path,
-                        time_text=cfg["start"])
+        progress("Building thumbnail…")
+        thumbs = [_thumbnail(cfg, lv, tw, th,
+                             os.path.join(outdir, f"{slug}_thumb.png"), work, frac)]
 
     if cfg.get("thumb_only"):
-        json.dump(_sidecar(cfg, lv, dur, scale, dyn, n),
+        json.dump(_sidecar(cfg, lv, dur, scale, dyn, n, variants),
                   open(os.path.join(outdir, f"{slug}_render.json"), "w"), indent=2)
         shutil.rmtree(work, ignore_errors=True)
         if on_progress:
             on_progress(1.0, 0)
         progress("Done (thumbnail only).")
-        return {"thumbnail": thumb, "video": None, "duration": dur, "folder": outdir}
+        return {"thumbnail": thumbs[0], "thumbnails": thumbs, "video": None,
+                "duration": dur, "folder": outdir}
 
     W, H = cfg.get("width", 2560), cfg.get("height", 1440)
     progress("Building frame layers…")
@@ -629,7 +669,8 @@ def run(cfg, progress=lambda s: None, on_progress=None):
               open(os.path.join(outdir, f"{slug}_render.json"), "w"), indent=2)
     shutil.rmtree(work, ignore_errors=True)
     progress("Done.")
-    return {"thumbnail": thumb, "video": vid, "duration": dur, "folder": outdir}
+    return {"thumbnail": thumbs[0], "thumbnails": thumbs, "video": vid,
+            "duration": dur, "folder": outdir}
 
 
 def main():
@@ -664,6 +705,11 @@ def main():
                    help="colour preset: Morning, Night, Evening, Canopy. Sets "
                         "background and foreground; supplies the accent unless "
                         "a --theme already does")
+    g.add_argument("--variants", metavar="A,B,C", default="",
+                   help="render one thumbnail per colour preset in a single "
+                        "pass, e.g. 'Aurora,Canopy,Evening'. All land in one "
+                        "folder with the palette in each filename. Needs "
+                        "--thumb-only, and replaces --colors")
     g.add_argument("--background", default="",
                    help="sky colour, e.g. #F2D289 - overrides --colors")
     g.add_argument("--foreground", default="",
@@ -766,12 +812,32 @@ def main():
     cfg = vars(n)
     custom = {"accent": n.accent,
               "background": n.background, "foreground": n.foreground}
-    name, acc = presets_mod.resolve(n.series_key, n.theme, P, custom)
+    # base_acc is the series/occasion/custom accent before any colour preset
+    # has had a say, so each variant below resolves from the same starting
+    # point the single-preset path does
+    name, base_acc = presets_mod.resolve(n.series_key, n.theme, P, custom)
     cfg["series"] = name
     bg, fg, acc = presets_mod.resolve_colors(
-        n.color_preset, n.theme, P, acc, custom)
+        n.color_preset, n.theme, P, base_acc, custom)
     cfg["background"], cfg["foreground"] = bg, fg
     cfg["accent"] = acc
+    picks = [s.strip() for s in n.variants.split(",") if s.strip()]
+    if picks:
+        unknown = [s for s in picks if s not in presets_mod.color_preset_names(P)]
+        if unknown:
+            a.error("--variants: unknown preset(s) " + ", ".join(unknown)
+                    + ". Choose from: "
+                    + ", ".join(presets_mod.color_preset_names(P)))
+        if not n.thumb_only:
+            a.error("--variants needs --thumb-only: it is for comparing looks "
+                    "in one pass, not for encoding several videos")
+        # custom[], not n.background: cfg is vars(n), so the resolved sky has
+        # already been written back over the flag by this point
+        if custom["background"]:
+            a.error("--variants and --background conflict: the custom sky "
+                    "would override every preset and they would all render "
+                    "the same")
+        cfg["variants"] = presets_mod.variants(picks, n.theme, P, base_acc, custom)
     cfg["outdir"] = n.outdir or default_outdir(P)
     cfg["geometry"] = presets_mod.series_geometry(n.series_key, P)
     cfg["scene"] = presets_mod.series_scene(n.series_key, P)
@@ -793,7 +859,11 @@ def main():
     for k in ("place", "city", "conditions", "series"):
         cfg[k] = cfg[k].upper()
     r = run(cfg, progress=lambda s: print(s, flush=True))
-    print(f"\nfolder    : {r['folder']}\nthumbnail : {r['thumbnail']}\nvideo     : {r['video']}")
+    print(f"\nfolder    : {r['folder']}")
+    for p in r["thumbnails"]:
+        print(f"thumbnail : {p}")
+    if r["video"]:
+        print(f"video     : {r['video']}")
 
 
 if __name__ == "__main__":

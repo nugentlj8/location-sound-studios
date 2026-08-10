@@ -33,7 +33,8 @@ it decides:
 | Tab | What it decides |
 |---|---|
 | **Slate** | what the frame says — place, city, conditions, date, start time, number, file name |
-| **Look** | colour and silhouette — series, style, detail, occasion, colours, custom colours |
+| **Look** | series, silhouette, detail, and the two silhouette treatments |
+| **Colour** | occasion, colours, custom colours, and the Compare list |
 | **Shape** | how loudness becomes height — scaling, dynamics, tower width, stacked rows |
 | **Video** | the encode only — resolution and chroma. Thumbnail only skips all of it |
 
@@ -159,6 +160,37 @@ named colours and the dropdown says so. The swatch beside each box shows the col
 
 The list is read from the presets themselves, so a colour preset you add to `COLOR_PRESETS` or a
 series you add to `lss_presets.json` appears in all three dropdowns with no further work.
+
+### Comparing several colours at once
+
+Tick **Thumbnail only**, then pick as many colours as you like in the **Compare** list on the
+Colour tab. You get one thumbnail per colour, all in the same folder, off a single pass over the
+audio — so three looks cost barely more than one. The silhouette is identical in each, because the
+geometry is built once and only the colours change.
+
+```
+py lss_studio\lss_render.py recording.flac --thumb-only --variants "Aurora,Canopy,Evening" ...
+```
+
+Each file carries its palette in the name, since a folder of variants is otherwise unreviewable —
+two nearby skies are genuinely hard to tell apart once they're separate files:
+
+```
+007 - Roosevelt Row/
+  007 - Roosevelt Row_thumb_Aurora_bg-0C1A2B_fg-E9F2F3_acc-3DD68C.png
+  007 - Roosevelt Row_thumb_Canopy_bg-357A2B_fg-F2D9A0_acc-72491E.png
+  007 - Roosevelt Row_thumb_Evening_bg-CC5522_fg-FFFFFF_acc-8C3355.png
+  007 - Roosevelt Row_render.json
+```
+
+The sidecar lists which file got which palette. **Preview at** works alongside it, so you can
+compare mid-playback frames rather than unplayed ones.
+
+Selected variants replace the **Colours** dropdown; leave the list empty and you get the single
+Colours choice as before. The list is greyed out unless Thumbnail only is ticked — comparing looks
+is the point, and six full video encodes of one recording is not something to trigger by accident.
+A custom sky would override every variant and render them all identically, so that combination is
+refused rather than silently wasted.
 
 To add your own preset, edit `COLOR_PRESETS` at the top of `lss_studio/lss_presets.py` — nothing
 in the render code needs touching. You can also add a `"colors"` block to `lss_presets.json`,

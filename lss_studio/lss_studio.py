@@ -24,6 +24,7 @@ PRESETS = lss_presets.load()
 
 BG, FG, ACC, FIELD = "#13232E", "#F0E7D6", "#CF7A34", "#1D3140"
 EDGE = "#3A4E5C"                 # swatch border, so a dark colour still shows
+MUTED, WARN = "#7d93a3", "#ED574C"
 
 # Every colour the presets already use, offered in each custom-colour dropdown.
 # Derived, never hand-copied - add a preset and it appears here.
@@ -119,13 +120,16 @@ class App:
         r += 1
 
         # Everything else is grouped by what it decides: what the frame SAYS,
-        # what it LOOKS like, what SHAPE the audio takes, and how the video
-        # encodes. The form was one 27-row column taller than a laptop screen.
+        # what it LOOKS like, what COLOUR it is, what SHAPE the audio takes, and
+        # how the video encodes. The form was one 27-row column taller than a
+        # laptop screen; the notebook sizes to its tallest tab, so colour has
+        # its own rather than making Look the tab that sets the height.
         nb = ttk.Notebook(f)
         nb.grid(row=r, column=0, columnspan=3, sticky="nsew", pady=(16, 4))
         r += 1
-        slate, look, shape, video = (ttk.Frame(nb, padding=14) for _ in range(4))
-        for tab, title in ((slate, "Slate"), (look, "Look"),
+        slate, look, colour, shape, video = (ttk.Frame(nb, padding=14)
+                                             for _ in range(5))
+        for tab, title in ((slate, "Slate"), (look, "Look"), (colour, "Colour"),
                            (shape, "Shape"), (video, "Video")):
             tab.columnconfigure(1, weight=1)
             nb.add(tab, text=title)
@@ -139,7 +143,7 @@ class App:
         self.date = self._entry(slate, sr, "Recording date", today); sr += 1
         self.start = self._entry(slate, sr, "Start time", "06:30 PM"); sr += 1
         ttk.Label(slate, text="Time the published file begins — after any trimming.",
-                  foreground="#7d93a3").grid(row=sr, column=1, sticky="w", pady=(0, 8))
+                  foreground=MUTED).grid(row=sr, column=1, sticky="w", pady=(0, 8))
         sr += 1
         ttk.Label(slate, text="Number").grid(row=sr, column=0, sticky="w",
                                              padx=(0, 12), pady=4)
@@ -152,15 +156,15 @@ class App:
         self.number = ttk.Entry(nf, width=8)
         self.number.pack(side="left", padx=(8, 0))
         ttk.Label(nf, text="  blank to hide it",
-                  foreground="#7d93a3").pack(side="left")
+                  foreground=MUTED).pack(side="left")
         sr += 1
         self.outname = self._entry(slate, sr, "Output file name", ""); sr += 1
         ttk.Label(slate, text="Names the folder and files, not the frame. "
                               "Blank uses the place.",
-                  foreground="#7d93a3").grid(row=sr, column=1, sticky="w", pady=(0, 6))
+                  foreground=MUTED).grid(row=sr, column=1, sticky="w", pady=(0, 6))
         sr += 1
 
-        # ---------- look: colour and silhouette ----------
+        # ---------- look: series and silhouette ----------
         sn = lss_presets.series_names(PRESETS)
         tn = lss_presets.theme_names(PRESETS)
         cn = lss_presets.color_preset_names(PRESETS)
@@ -175,7 +179,7 @@ class App:
                                   list(lss_scene.DETAIL), "Default"); lr += 1
         ttk.Label(look, text="How much shape the mountains, trees and houses "
                              "carry. Tower width is for blocks.",
-                  foreground="#7d93a3").grid(row=lr, column=1, sticky="w", pady=(0, 6))
+                  foreground=MUTED).grid(row=lr, column=1, sticky="w", pady=(0, 6))
         lr += 1
         self.ahead = self._combo(look, lr, "Trees before the playhead",
                                  lss_scene.TREE_AHEAD, lss_scene.TREE_AHEAD[0])
@@ -185,30 +189,60 @@ class App:
         lr += 1
         ttk.Label(look, text="Both grey out for a silhouette that has no "
                              "trees or no mountains.",
-                  foreground="#7d93a3").grid(row=lr, column=1, sticky="w", pady=(0, 8))
-        lr += 1
-        self.theme = self._combo(look, lr, "Occasion", tn, tn[0]); lr += 1
-        self.colors = self._combo(look, lr, "Colours", cn, cn[0]); lr += 1
-        ttk.Label(look, text="Sets the sky. The occasion keeps its own accent.",
-                  foreground="#7d93a3").grid(row=lr, column=1, sticky="w", pady=(0, 6))
-        lr += 1
-        self.cust_bg = self._color_row(look, lr, "Custom sky"); lr += 1
-        self.cust_fg = self._color_row(look, lr, "Custom silhouette"); lr += 1
-        self.cust_a = self._color_row(look, lr, "Custom accent"); lr += 1
-        ttk.Label(look, text="Pick a colour already in use, or type #RRGGBB. "
-                             "Blank follows the colours above.",
-                  foreground="#7d93a3").grid(row=lr, column=1, sticky="w", pady=(0, 8))
+                  foreground=MUTED).grid(row=lr, column=1, sticky="w", pady=(0, 8))
         lr += 1
         self.filled = tk.BooleanVar(value=False)
         ttk.Checkbutton(look, text="Solid silhouette instead of outlines",
                         variable=self.filled).grid(row=lr, column=1, sticky="w", pady=4)
         lr += 1
-        self.mono = tk.BooleanVar(value=False)
-        ttk.Checkbutton(look, text="Monochrome slate — small text in the "
-                                   "silhouette colour, not the accent",
-                        variable=self.mono).grid(row=lr, column=1, sticky="w", pady=4)
-        lr += 1
         self._series_changed()          # now that ahead/face exist to be greyed
+
+        # ---------- colour ----------
+        cr = 0
+        self.theme = self._combo(colour, cr, "Occasion", tn, tn[0]); cr += 1
+        self.colors = self._combo(colour, cr, "Colours", cn, cn[0]); cr += 1
+        ttk.Label(colour, text="Sets the sky. The occasion keeps its own accent.",
+                  foreground=MUTED).grid(row=cr, column=1, sticky="w", pady=(0, 6))
+        cr += 1
+        self.cust_bg = self._color_row(colour, cr, "Custom sky"); cr += 1
+        self.cust_fg = self._color_row(colour, cr, "Custom silhouette"); cr += 1
+        self.cust_a = self._color_row(colour, cr, "Custom accent"); cr += 1
+        ttk.Label(colour, text="Pick a colour already in use, or type #RRGGBB. "
+                               "Blank follows the colours above.",
+                  foreground=MUTED).grid(row=cr, column=1, sticky="w", pady=(0, 8))
+        cr += 1
+        self.mono = tk.BooleanVar(value=False)
+        ttk.Checkbutton(colour, text="Monochrome slate — small text in the "
+                                     "silhouette colour, not the accent",
+                        variable=self.mono).grid(row=cr, column=1, sticky="w",
+                                                 pady=(0, 8))
+        cr += 1
+
+        # One thumbnail per colour, off a single pass over the audio. Only for
+        # thumbnails - several full encodes of one recording is not something
+        # anyone wants by accident - so it follows the Thumbnail only tick.
+        ttk.Label(colour, text="Compare").grid(row=cr, column=0, sticky="nw",
+                                               padx=(0, 12), pady=4)
+        vb = ttk.Frame(colour)
+        vb.grid(row=cr, column=1, columnspan=2, sticky="ew", pady=4)
+        self.variants = tk.Listbox(vb, selectmode="multiple", height=5,
+                                   bg=FIELD, fg=FG, relief="flat",
+                                   highlightthickness=0, activestyle="none",
+                                   selectbackground=ACC, selectforeground=BG,
+                                   disabledforeground="#5A6E7C",
+                                   exportselection=False)   # or Tk drops the
+        for name in cn:                                     # selection on focus
+            self.variants.insert("end", name)
+        self.variants.pack(side="left", fill="x", expand=True)
+        sb = ttk.Scrollbar(vb, orient="vertical", command=self.variants.yview)
+        sb.pack(side="left", fill="y")
+        self.variants.config(yscrollcommand=sb.set)
+        cr += 1
+        self.vhint = ttk.Label(
+            colour, text="Tick Thumbnail only to render several colours at once.",
+            foreground=MUTED)
+        self.vhint.grid(row=cr, column=1, sticky="w", pady=(0, 8))
+        cr += 1
 
         # ---------- shape: how loudness becomes height ----------
         hr = 0
@@ -217,7 +251,7 @@ class App:
         self.dyn = self._combo(shape, hr, "Dynamics",
                                list(lss_scene.DYNAMICS), "More"); hr += 1
         ttk.Label(shape, text="Dynamics has no effect on Fixed loudness.",
-                  foreground="#7d93a3").grid(row=hr, column=1, sticky="w", pady=(0, 8))
+                  foreground=MUTED).grid(row=hr, column=1, sticky="w", pady=(0, 8))
         hr += 1
         self.towers = self._combo(shape, hr, "Tower width",
                                   list(lss_render.TOWERS) + ["Auto"],
@@ -226,7 +260,7 @@ class App:
                                 ["1", "2", "3", "4", "5"], "1"); hr += 1
         ttk.Label(shape, text="Both are for blocks and topo. A generative "
                               "silhouette is one scene, not stacked rows.",
-                  foreground="#7d93a3").grid(row=hr, column=1, sticky="w", pady=(0, 8))
+                  foreground=MUTED).grid(row=hr, column=1, sticky="w", pady=(0, 8))
         hr += 1
         self.peak = tk.BooleanVar(value=True)
         ttk.Checkbutton(shape, text="Height = loudest moment (not average)",
@@ -248,7 +282,7 @@ class App:
                                                    pady=(8, 4))
         vr += 1
         ttk.Label(video, text="Thumbnail only skips everything on this tab.",
-                  foreground="#7d93a3").grid(row=vr, column=1, sticky="w", pady=(6, 0))
+                  foreground=MUTED).grid(row=vr, column=1, sticky="w", pady=(6, 0))
         vr += 1
 
         # ---------- always visible: render, and what to render ----------
@@ -261,16 +295,17 @@ class App:
         self.thumbonly = tk.BooleanVar(value=False)
         ttk.Checkbutton(act, text="Thumbnail only — skip the video encode",
                         variable=self.thumbonly).pack(side="left", padx=(16, 0))
+        self.thumbonly.trace_add("write", lambda *_a: self._thumbonly_changed())
         ttk.Label(act, text="Preview at").pack(side="left", padx=(20, 6))
         self.preview = ttk.Entry(act, width=5)
         self.preview.pack(side="left")
         ttk.Label(act, text="%  blank = unplayed",
-                  foreground="#7d93a3").pack(side="left", padx=(6, 0))
+                  foreground=MUTED).pack(side="left", padx=(6, 0))
 
         self.bar = ttk.Progressbar(f, mode="determinate", maximum=1000)
         self.bar.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(4, 2))
         r += 1
-        self.status = ttk.Label(f, text="", foreground="#7d93a3")
+        self.status = ttk.Label(f, text="", foreground=MUTED)
         self.status.grid(row=r, column=0, columnspan=3, sticky="w", pady=(0, 6))
         r += 1
 
@@ -278,6 +313,7 @@ class App:
                            insertbackground=FG, wrap="word")
         self.log.grid(row=r, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
         f.rowconfigure(r, weight=1)
+        self._thumbonly_changed()
         self.say("Choose an audio file and fill in the slate, then press Render.")
         self.root.after(120, self.drain)
         self.root.after(400, self._check_updates)
@@ -304,6 +340,24 @@ class App:
         self.style["values"] = styles
         self.style.set(cur if cur in styles else lss_scene.DEFAULT_STYLE[scene])
         self._style_changed()
+
+    def _thumbonly_changed(self):
+        """The Compare list only means anything without an encode, so it
+        follows the tick rather than sitting there inviting six video renders."""
+        on = bool(self.thumbonly.get())
+        self.variants.config(state="normal" if on else "disabled")
+        self.vhint.config(
+            text="One thumbnail per colour, in one folder. None selected uses "
+                 "Colours above."
+            if on else "Tick Thumbnail only to render several colours at once.")
+
+    def _picked_variants(self):
+        """Selected colour presets, but only when they can actually be used -
+        a selection made before the tick was cleared must not leak into a
+        video render."""
+        if not self.thumbonly.get():
+            return []
+        return [self.variants.get(i) for i in self.variants.curselection()]
 
     def _style_changed(self, _evt=None):
         """Grey out a treatment the chosen silhouette never reaches - blocks
@@ -419,17 +473,28 @@ class App:
             elif kind == "done":
                 self.busy = False
                 self.bar["value"] = 1000
-                self.status.config(text="Finished.")
                 self.go.config(state="normal", text="Render")
-                self.say("\nFolder    : %s\nThumbnail : %s%s" %
-                         (payload.get("folder", ""), payload["thumbnail"],
-                          "\nVideo     : " + payload["video"] if payload.get("video")
-                          else "\n(thumbnail only — no video rendered)"))
-                messagebox.showinfo("Finished", "Render complete.")
+                thumbs = payload.get("thumbnails") or [payload["thumbnail"]]
+                if payload.get("video"):
+                    what = "video and thumbnail"
+                elif len(thumbs) > 1:
+                    what = "%d thumbnails" % len(thumbs)
+                else:
+                    what = "thumbnail"
+                # said here rather than in a dialog: nothing to dismiss before
+                # the next render, and the paths are in the log either way
+                self.status.config(text="Render complete — %s in %s"
+                                        % (what, payload.get("folder", "")),
+                                   foreground=ACC)
+                self.say("\nFolder    : %s" % payload.get("folder", ""))
+                for p in thumbs:
+                    self.say("Thumbnail : " + os.path.basename(p))
+                self.say("Video     : " + payload["video"] if payload.get("video")
+                         else "(thumbnail only — no video rendered)")
             elif kind == "error":
                 self.busy = False
                 self.bar["value"] = 0
-                self.status.config(text="Failed.")
+                self.status.config(text="Failed.", foreground=WARN)
                 self.go.config(state="normal", text="Render")
                 self.say("\nFAILED: " + payload)
                 messagebox.showerror("Render failed", payload)
@@ -518,10 +583,20 @@ class App:
                 messagebox.showwarning("Check the form",
                                        f"'{val}' is not a colour like #CF7A34.")
                 return
-        series_name, acc = lss_presets.resolve(
+        # base_acc is the accent before any colour preset has had a say, so
+        # every Compare variant resolves from the same starting point
+        series_name, base_acc = lss_presets.resolve(
             self.series.get(), self.theme.get(), PRESETS, custom)
         bg, fg, acc = lss_presets.resolve_colors(
-            self.colors.get(), self.theme.get(), PRESETS, acc, custom)
+            self.colors.get(), self.theme.get(), PRESETS, base_acc, custom)
+        picks = self._picked_variants()
+        if picks and custom["background"].strip():
+            messagebox.showwarning(
+                "Check the form",
+                f"A custom sky overrides every colour, so all {len(picks)} "
+                "would render the same.\n\nClear the custom sky, or clear the "
+                "Compare list.")
+            return
         geometry = lss_presets.series_geometry(self.series.get(), PRESETS)
         _suf, cyc, cmin = lss_presets.theme_extras(self.theme.get(), PRESETS)
         # Only second-guess colours typed in by hand. The built-in presets were
@@ -555,6 +630,8 @@ class App:
             "number": self.number.get().strip(),
             "number_style": self.numstyle.get(),
             "color_preset": self.colors.get(),
+            "variants": lss_presets.variants(picks, self.theme.get(), PRESETS,
+                                             base_acc, custom),
             "accent": acc,
             "background": bg, "foreground": fg,
             "width": w, "height": h, "fps": 10, "geometry": geometry,
@@ -578,7 +655,7 @@ class App:
         self.go.config(state="disabled", text="Rendering…")
         self.log.delete("1.0", "end")
         self.bar["value"] = 0
-        self.status.config(text="Starting…")
+        self.status.config(text="Starting…", foreground=MUTED)
         threading.Thread(target=self.work, args=(cfg,), daemon=True).start()
 
     def work(self, cfg):
