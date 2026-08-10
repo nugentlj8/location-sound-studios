@@ -200,9 +200,9 @@ MTN_LIT, MTN_SHADOW = 0.68, 0.87
 MTN_RIDGE_FACE = 0.52            # a fill already defines the ridge - the
                                  # stroke only needs to keep the edge crisp
 TREE_FAINT = 0.62                # an unplayed tree, when drawn faint. Further
-                                 # toward the sky than this and it holds on the
-                                 # night sky but washes out on Canopy, where
-                                 # amber into green loses contrast fast
+                                 # toward the sky than this and it holds on a
+                                 # dark sky but washes out on the paler ones,
+                                 # where there is less contrast to spend
 LW_RIDGE, LW_CREASE = 4.5, 3.5   # design units
 LW_TREE, LW_HOUSE = 3.5, 4.0
 

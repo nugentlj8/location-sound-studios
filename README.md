@@ -126,7 +126,7 @@ accent the playhead reveals, chosen together so the skyline still reads at thumb
 | Morning | deep gold | white | low warm sun |
 | Night | deep blue | bone | the original look |
 | Evening | burnt orange | white | sunset |
-| Canopy | sunlit green | amber | lit against foliage |
+| Canopy | deep forest green | cream | sunlight through the leaves |
 | Alpine | cold blue | snow white | high thin air, glacier-ice playhead |
 | Alpenglow | violet dusk | pale pink | the last sun still on the peaks |
 | Mist | fog grey-green | dark pine | fog off the water |
@@ -153,7 +153,7 @@ whichever of bone or ink stays readable on your sky, so a custom background can 
 skyline invisible.
 
 Each row has a dropdown of every colour the presets, series and occasions already use, named and
-with its hex — "Canopy sky #357A2B", "Night sky #13232E" — so a look can be built out of colours
+with its hex — "Canopy sky #1D4029", "Night sky #13232E" — so a look can be built out of colours
 already known to work together. Picking one fills the hex box; typing a code in the box directly
 still works and switches the dropdown to **Custom…**. Type a code that happens to be one of the
 named colours and the dropdown says so. The swatch beside each box shows the colour you'll get.
@@ -183,7 +183,7 @@ two nearby skies are genuinely hard to tell apart once they're separate files:
 007 - Roosevelt Row/
   007 - Roosevelt Row_thumb_Night_bg-13232E_fg-F0E7D6_acc-CF7A34.png
   007 - Roosevelt Row_thumb_Aurora_bg-0C1A2B_fg-E9F2F3_acc-3DD68C.png
-  007 - Roosevelt Row_thumb_Canopy_bg-357A2B_fg-F2D9A0_acc-72491E.png
+  007 - Roosevelt Row_thumb_Canopy_bg-1D4029_fg-F1E9D2_acc-E2953A.png
   007 - Roosevelt Row_render.json
 ```
 
@@ -203,7 +203,7 @@ From the command line:
 
 ```
 py lss_studio\lss_render.py recording.flac --colors Morning ...
-py lss_studio\lss_render.py recording.flac --colors Canopy --accent "#8A5C28" ...
+py lss_studio\lss_render.py recording.flac --colors Canopy --accent "#A8C24A" ...
 py lss_studio\lss_render.py recording.flac --background "#2B1B3D" --foreground "#EDE4F2" ...
 py lss_studio\lss_render.py --list-presets
 ```

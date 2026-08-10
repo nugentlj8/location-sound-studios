@@ -48,10 +48,10 @@ COLOR_PRESETS = {
         "accent": "#8C3355", "accent2": "#73203F",
         "note": "burnt sunset orange, white skyline, plum playhead",
     },
-    "Canopy": {                                      # 3.83, 1.48, 5.66
-        "background": "#357A2B", "foreground": "#F2D9A0",
-        "accent": "#72491E", "accent2": "#5A3716",
-        "note": "sunlit foliage, amber skyline lit against it",
+    "Canopy": {                                      # 9.53, 4.73, 2.02
+        "background": "#1D4029", "foreground": "#F1E9D2",
+        "accent": "#E2953A", "accent2": "#A8C24A",
+        "note": "deep forest green, sunlight coming through the leaves",
     },
     # Four more that read as outdoors without reaching for foliage green or
     # bark brown. Each still works for any scene, but they were chosen against
