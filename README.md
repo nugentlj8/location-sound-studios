@@ -34,7 +34,7 @@ accent the playhead reveals, chosen together so the skyline still reads at thumb
 | Morning | deep gold | white | low warm sun |
 | Night | deep blue | bone | the original look |
 | Evening | burnt orange | white | sunset |
-| Canopy | deep forest green | amber | lit against foliage |
+| Canopy | sunlit green | amber | lit against foliage |
 
 Presets are deliberately scene-agnostic — the same four work for city, town, nature and spaces,
 because what makes a recording look like a city is the silhouette shape, not the colour. So
@@ -57,9 +57,14 @@ From the command line:
 
 ```
 py lss_studio\lss_render.py recording.flac --colors Morning ...
-py lss_studio\lss_render.py recording.flac --background "#F2D289" --accent "#9C4712" ...
+py lss_studio\lss_render.py recording.flac --colors Canopy --accent "#8A5C28" ...
+py lss_studio\lss_render.py recording.flac --background "#2B1B3D" --foreground "#EDE4F2" ...
 py lss_studio\lss_render.py --list-presets
 ```
+
+`--background` and `--foreground` override whichever preset is chosen, and `--accent` overrides
+its accent. Give a background without a foreground and it derives a readable one for you, so a
+custom sky can never leave the skyline invisible.
 
 ## Where renders go
 
