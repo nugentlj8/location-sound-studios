@@ -1,25 +1,29 @@
 {
-  "_comment": "Edit this file to add or change presets. Restart the app to pick up changes. 'accent2' optional. 'geometry' is 'steps' or 'curves'. 'suffix' is appended to the series name. 'cycle' is a list of colours the played line runs through, changing every 'cycle_minutes'.",
+  "_comment": "Edit this file to add or change presets. Restart the app to pick up changes. 'accent2' optional. 'geometry' is 'steps' or 'curves'. 'scene' is 'town' or 'nature' and decides which silhouette styles the series can use - omit it and it is worked out from the series name, then from the geometry. 'suffix' is appended to the series name. 'cycle' is a list of colours the played line runs through, changing every 'cycle_minutes'.",
   "series": {
     "Sounds of the City": {
       "name": "SOUNDS OF THE CITY",
       "accent": "#CF7A34",
-      "geometry": "steps"
+      "geometry": "steps",
+      "scene": "town"
     },
     "Sounds in Spaces": {
       "name": "SOUNDS IN SPACES",
       "accent": "#45A6A0",
-      "geometry": "steps"
+      "geometry": "steps",
+      "scene": "town"
     },
     "Sounds of Nature": {
       "name": "SOUNDS OF NATURE",
       "accent": "#86A65C",
-      "geometry": "curves"
+      "geometry": "curves",
+      "scene": "nature"
     },
     "Sounds in Towns": {
       "name": "SOUNDS IN TOWNS",
       "accent": "#6E8CAE",
-      "geometry": "steps"
+      "geometry": "steps",
+      "scene": "town"
     }
   },
   "themes": {

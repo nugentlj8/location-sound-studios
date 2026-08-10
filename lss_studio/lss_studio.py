@@ -12,6 +12,7 @@ from tkinter import ttk, filedialog, messagebox
 
 import lss_render
 import lss_presets
+import lss_scene
 try:
     import lss_update
 except Exception:
@@ -125,6 +126,11 @@ class App:
         tn = lss_presets.theme_names(PRESETS)
         cn = lss_presets.color_preset_names(PRESETS)
         self.series = self._combo(f, r, "Series", sn, sn[0]); r += 1
+        # the silhouette a series can wear depends on the scene it is set in,
+        # so this list is rebuilt whenever the series changes
+        self.style = self._combo(f, r, "Silhouette", ["blocks"], "blocks"); r += 1
+        self.series.bind("<<ComboboxSelected>>", self._series_changed)
+        self._series_changed()
         self.theme = self._combo(f, r, "Occasion", tn, tn[0]); r += 1
         self.colors = self._combo(f, r, "Colours", cn, cn[0]); r += 1
         ttk.Label(f, text="Sets the sky. The occasion keeps its own accent.",
@@ -170,6 +176,13 @@ class App:
         self.towers = self._combo(f, r, "Tower width",
                                   ["Thick", "Default", "Thin", "Fine", "Auto"],
                                   "Default"); r += 1
+        self.detail = self._combo(f, r, "Silhouette detail",
+                                  list(lss_scene.DETAIL), "Default"); r += 1
+        ttk.Label(f, text="How much shape the mountains, trees and houses "
+                          "carry. Tower width is for blocks.",
+                  foreground="#7d93a3").grid(row=r, column=1, sticky="w",
+                                             pady=(0, 6))
+        r += 1
         self.dyn = self._combo(f, r, "Dynamics",
                                ["Natural", "More", "Most"], "More"); r += 1
         ttk.Label(f, text="Dynamics has no effect on Fixed loudness.",
@@ -238,6 +251,14 @@ class App:
             if newer:
                 self.q.put(("update", newer))
         threading.Thread(target=worker, daemon=True).start()
+
+    def _series_changed(self, _evt=None):
+        """Offer only the silhouettes this series' scene actually has."""
+        scene = lss_presets.series_scene(self.series.get(), PRESETS)
+        styles = lss_scene.SCENE_STYLES[scene]
+        cur = self.style.get()
+        self.style["values"] = styles
+        self.style.set(cur if cur in styles else lss_scene.DEFAULT_STYLE[scene])
 
     # ---------- widget helpers ----------
     def _entry(self, f, r, label, default=""):
@@ -406,6 +427,12 @@ class App:
                     "muddy at thumbnail size:\n\n  " + "  ".join(low) +
                     "\n\nRender anyway?"):
                 return
+        scene = lss_presets.series_scene(self.series.get(), PRESETS)
+        err = lss_scene.check(scene, self.style.get(), int(self.rows.get()),
+                              bool(self.filled.get()))
+        if err:
+            messagebox.showwarning("Check the form", err[0].upper() + err[1:])
+            return
         w, h = SIZES[self.size.get()]
         cfg = {
             "audio": self.audio.get().strip(),
@@ -422,6 +449,8 @@ class App:
             "accent": acc, "accent2": acc2,
             "background": bg, "foreground": fg,
             "width": w, "height": h, "fps": 10, "geometry": geometry,
+            "scene": scene, "style": self.style.get(),
+            "detail": self.detail.get(),
             "cycle": cyc, "cycle_minutes": cmin,
             "towers": self.towers.get(), "dynamics": self.dyn.get(),
             "scale": self.scale.get(),

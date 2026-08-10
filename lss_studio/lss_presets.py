@@ -53,6 +53,29 @@ COLOR_PRESETS = {
         "accent": "#72491E", "accent2": "#5A3716",
         "note": "sunlit foliage, amber skyline lit against it",
     },
+    # Four more that read as outdoors without reaching for foliage green or
+    # bark brown. Each still works for any scene, but they were chosen against
+    # the mountains_forest silhouette, where a sky occupies most of the frame.
+    "Alpine": {                                      # 6.98, 4.31, 1.62
+        "background": "#3E5C78", "foreground": "#FFFFFF",
+        "accent": "#9FD3E8", "accent2": "#6FB4D2",
+        "note": "cold high air, snow silhouette, glacier-ice playhead",
+    },
+    "Alpenglow": {                                   # 11.97, 4.92, 2.43
+        "background": "#2C2148", "foreground": "#F7E2E6",
+        "accent": "#E8734A", "accent2": "#B8536E",
+        "note": "violet dusk with the last sun still on the peaks",
+    },
+    "Mist": {                                        # 9.10, 4.76, 1.91
+        "background": "#C6D2CE", "foreground": "#1F2E2C",
+        "accent": "#2F5D5B", "accent2": "#4E7F73",
+        "note": "fog off the water, dark pines standing in it",
+    },
+    "Aurora": {                                      # 15.41, 9.34, 1.65
+        "background": "#0C1A2B", "foreground": "#E9F2F3",
+        "accent": "#3DD68C", "accent2": "#5FA8E0",
+        "note": "arctic night, northern lights running the timeline",
+    },
 }
 
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -129,6 +152,29 @@ def auto_foreground(bg):
 def series_geometry(series_key, presets):
     s = presets["series"].get(series_key) or list(presets["series"].values())[0]
     return s.get("geometry", "steps")
+
+
+# Which scene a series is set in, and so which silhouette styles it can wear.
+# Shipped in code because lss_presets.json is the user's own file and is never
+# overwritten by an update - an existing install has no "scene" key to read.
+SERIES_SCENE = {
+    "Sounds of the City": "town",
+    "Sounds in Spaces": "town",
+    "Sounds in Towns": "town",
+    "Sounds of Nature": "nature",
+}
+
+
+def series_scene(series_key, presets):
+    """A "scene" key in the JSON wins, then the shipped map, then the geometry
+    the series already uses - so a series someone added themselves still
+    resolves to something rather than failing."""
+    s = presets["series"].get(series_key) or {}
+    if s.get("scene"):
+        return s["scene"]
+    if series_key in SERIES_SCENE:
+        return SERIES_SCENE[series_key]
+    return "nature" if s.get("geometry") == "curves" else "town"
 
 
 def theme_extras(theme_key, presets):

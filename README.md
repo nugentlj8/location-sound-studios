@@ -24,6 +24,76 @@ setx LSS_FONT "C:\Users\YOU\AppData\Local\Microsoft\Windows\Fonts\BarlowCondense
 
 Open a fresh window afterward. Without it the app falls back to Arial.
 
+## Silhouettes
+
+Each series is set in a **scene**, and the scene decides which silhouettes it can wear. Pick one
+with the **Silhouette** dropdown, or `--style` from the command line:
+
+| Scene | Series | Styles |
+|---|---|---|
+| town | Sounds of the City, in Towns, in Spaces | `blocks` (default), `houses` |
+| nature | Sounds of Nature | `topo` (default), `mountains`, `forest`, `mountains_forest` |
+
+The defaults are what these series have always drawn, so existing commands are unaffected.
+
+- **`blocks`** — the skyline of rectangular towers, one per block of the recording.
+- **`houses`** — a low residential row with varied rooflines and the occasional street tree. Only
+  the loudest few percent of the recording earns a taller block, so the skyline stays a town rather
+  than a city.
+- **`topo`** — the smoothed contour line.
+- **`mountains`** — a range whose summits sit where the loud passages are, taller for louder.
+- **`forest`** — a treeline. With nothing else carrying the signal, tree height follows loudness.
+- **`mountains_forest`** — trees in front, mountains behind.
+
+In the nature silhouettes the **mountains carry the audio and the trees do not**: tree size is
+pinned to the frame, so a quiet recording still gets a normal-looking treeline while the mountains
+rise and fall with the recording. As the playhead crosses, trees fill solid; ahead of it they are
+present but faint. The mountains only ever carry flat lit and shadow faces kept close to the sky
+colour, so the trees stay the thing that reads as progress.
+
+How far a face sits from the sky is measured against the sky, not fixed — a bright silhouette can
+be pushed further back and still read, while a mid-toned accent goes muddy at the same setting.
+That keeps the played and unplayed halves at a comparable weight in every palette.
+
+Everything generated is seeded from the recording's own loudness envelope, so the same file always
+renders the same shape. The seed is written into the render's `.json` sidecar.
+
+```
+py lss_studio\lss_render.py recording.flac --style mountains_forest ...
+py lss_studio\lss_render.py recording.flac --style houses --colors Morning ...
+```
+
+Asking for a silhouette a series does not have is an error, not a silent fallback:
+
+```
+--style 'houses' is not available in the nature scene. Choose from: topo, mountains,
+forest, mountains_forest. 'houses' belongs to the town scene.
+```
+
+To put your own series in a scene, add `"scene": "nature"` or `"scene": "town"` to it in
+`lss_presets.json`. Leave it out and it is worked out from the series name, then from its geometry.
+
+### Detail
+
+**Silhouette detail** (`--detail Coarse | Default | Fine`, or a number like `1.2`) sets how much
+shape those styles carry — how many summits, how many trees, how many houses. It counts features,
+not pixels, so a thumbnail and the full video of the same recording read identically; only the
+resolution differs. Tower width stays the control for `blocks`.
+
+### Checking a look without an encode
+
+`--progress` renders the thumbnail as a mid-playback frame instead of the unplayed state, so you
+can see the fill behaviour without waiting for a full video:
+
+```
+py lss_studio\lss_render.py recording.flac --style mountains_forest --thumb-only --progress 0.5 ...
+```
+
+Two further switches change the treatment. `--tree-ahead faint|outline` sets how a tree looks
+before the playhead reaches it, and `--mountain-face twotone|outline` whether the mountain faces
+carry flat lit and shadow tones or only a ridgeline. The first of each is the default; `outline`
+on both gives a lighter, more linear frame.
+
 ## Colours
 
 Pick a **Colours** preset to set the time of day. Each one sets the sky, the silhouette, and the
@@ -35,6 +105,13 @@ accent the playhead reveals, chosen together so the skyline still reads at thumb
 | Night | deep blue | bone | the original look |
 | Evening | burnt orange | white | sunset |
 | Canopy | sunlit green | amber | lit against foliage |
+| Alpine | cold blue | snow white | high thin air, glacier-ice playhead |
+| Alpenglow | violet dusk | pale pink | the last sun still on the peaks |
+| Mist | fog grey-green | dark pine | fog off the water |
+| Aurora | arctic night | starlight | northern lights running the timeline |
+
+The last four were chosen against the nature silhouettes, where sky fills most of the frame, and
+read as outdoors without reaching for foliage green or bark brown. They still work for any scene.
 
 Presets are deliberately scene-agnostic — the same four work for city, town, nature and spaces,
 because what makes a recording look like a city is the silhouette shape, not the colour. So
@@ -117,6 +194,7 @@ Setup.bat                    one-time setup
 lss_studio/
   lss_studio.py              the window
   lss_render.py              render engine
+  lss_scene.py               generative silhouette shapes
   lss_draw.py                drawing
   lss_presets.py             preset loading
   lss_presets.json           YOUR presets (edit freely)

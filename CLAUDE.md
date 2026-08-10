@@ -10,9 +10,6 @@ loudness envelope — quiet sections make short buildings, loud moments make tal
 clock overlay synced to a configured start time. Used to publish a series of ambient city/nature
 soundscape recordings ("Sounds of the City" etc.) with consistent branding.
 
-There is no test suite, package manifest, or build step. This is a small single-purpose tool run
-directly with `py`.
-
 ## Running it
 
 ```
@@ -21,34 +18,21 @@ Location Sound Studios.bat         # launch the GUI (console window, shows error
 Location Sound Studios.vbs         # launch the GUI via pythonw, no console window
 ```
 
-Everything lives under `lss_studio/` and runs with the stdlib `py` launcher — no venv, no
-requirements.txt. Dependencies are exactly: `numpy`, `pillow`, and `ffmpeg`/`ffprobe` on PATH.
-
 CLI usage (bypasses the GUI, same render engine):
 ```
 py lss_studio/lss_render.py <audio> --place "..." --city "..." --conditions "..." --date YYYY-MM-DD --start "06:30 PM"
 py lss_studio/lss_render.py --list-presets      # show available series/theme names
 ```
-Key CLI flags: `--preset` (series), `--theme`, `--scale`, `--dynamics`, `--towers`, `--rows`,
-`--filled`, `--height-stat {peak,rms}`, `--no-align`, `--thumb-only`, `--full-chroma`. See
-`lss_render.py main()` for the complete argparse definition — it's the authoritative list.
+See `lss_render.py main()` for the complete flag list — it's the authoritative source.
 
 There is no automated test suite. Verify changes by actually rendering: run the CLI against a short
 audio clip (or `--thumb-only` to skip the slow video encode) and inspect the output PNG/MP4.
 
 ## Architecture
 
-Four modules under `lss_studio/`, in dependency order:
+The three modules worth knowing before you edit them (`lss_presets.py` and `lss_draw.py` are
+self-explanatory on reading):
 
-- **`lss_presets.py`** — loads and validates `lss_presets.json` (falls back to a single hardcoded
-  preset if the JSON is missing/invalid). Resolves a (series, theme, custom colour overrides) triple
-  down to `(display_name, accent, accent2)`. Also has the WCAG contrast check used to warn about
-  low-contrast colour choices in the GUI.
-- **`lss_draw.py`** — pure Pillow drawing primitives (no numpy audio logic, no ffmpeg). Renders
-  everything at 2x supersampling (`SS = 2`) and downsamples with LANCZOS for antialiasing. Two
-  skyline geometries: `"steps"` (rectangular blocks) and `"curves"` (Catmull-Rom spline through the
-  same points) — chosen per-series in `lss_presets.json`. Also does per-glyph text layout (for exact
-  letter-tracking) and the banded multi-colour line drawing used for holiday "cycle" themes.
 - **`lss_render.py`** — the render engine and CLI entry point (`main()`). This is where audio
   becomes pixels:
   1. `envelope()` streams the audio through `ffmpeg` to raw PCM and computes windowed RMS in dBFS
@@ -62,6 +46,9 @@ Four modules under `lss_studio/`, in dependency order:
   4. `compose()` is the single frame-composition function shared by the thumbnail and every video
      frame — the video is literally the thumbnail layout rendered at a larger size, with the
      timestamp slot left blank for ffmpeg's `drawtext` to fill in live.
+  4b. For a silhouette style, `compose()` hands off to `lss_draw.draw_scene()` instead, drawing the
+     geometry `lss_scene.build()` produced. The `played` flag picks which side of the playhead the
+     frame represents; `--progress` composites the two into one still without an encode.
   5. `video_layers()` + `build_video()` build the video as an ffmpeg `filter_complex` graph: a base
      "bone"-coloured full frame, an accent-coloured ("clay") full frame, and a mask that slides left
      to right over the video's duration so the accent colour appears to "play across" the skyline in
@@ -70,6 +57,15 @@ Four modules under `lss_studio/`, in dependency order:
      video (unless `--thumb-only`), and a `<slug>_render.json` sidecar capturing every parameter used,
      so a past render can be understood or reproduced later. Output goes to a fresh
      `<outdir>/<slug>/` folder per render; it never overwrites an earlier one (auto-numbers instead).
+- **`lss_scene.py`** — the generative silhouettes (`mountains`, `forest`, `mountains_forest`,
+  `houses`), plus `map_db()`, the single loudness→height mapping that `to_levels()` also calls.
+  The rule that makes the rest work: geometry is built **once per render, in 1280x720 design
+  units**, and scaled by `k` at draw time. The thumbnail, both video layers and every resolution
+  are therefore one shape at different sizes, never separate derivations — which is what makes
+  `--detail` count *features* rather than pixels. All randomness comes from a seed hashed off the
+  envelope, so a recording always renders identically. `SCENE_STYLES` is the scene→style map and
+  `check()` is the up-front validator both the CLI and GUI call; a bad combination is an error,
+  never a silent fallback.
 - **`lss_studio.py`** — the Tkinter GUI. Builds the config dict expected by `lss_render.run()` and
   calls it in a background thread, polling a `queue.Queue` on a Tk `after()` timer for log lines and
   progress. Not the place to add render logic — it's a thin form over `lss_render.run()`.

@@ -16,6 +16,18 @@ def rgb(h):
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
 
+def mix(a, b, t):
+    """Blend colour a toward b by t, as an (r,g,b) tuple.
+
+    Used instead of alpha because everything is drawn on an opaque RGB canvas;
+    a flat blend against the known sky is indistinguishable from opacity here
+    and costs no compositing pass.
+    """
+    ca, cb = rgb(a), rgb(b)
+    t = max(0.0, min(1.0, t))
+    return tuple(int(round(ca[i] + (cb[i] - ca[i]) * t)) for i in range(3))
+
+
 def level_points(y0, amp, lv, W):
     w = (W + 60) / len(lv)
     return [(-30 + (i + 0.5) * w, y0 - amp * v) for i, v in enumerate(lv)], w
@@ -194,6 +206,149 @@ def envelope_pts(y0, amp, lv, W, mode="steps"):
         pts += [(x, y), (x + w, y)]
         x += w
     return pts
+
+
+# ------------------------------------------------------- generative scenes
+# Depth is expressed as distance from the SKY, not as absolute darkness. The
+# reference art is near-black trees on white; on the night sky near-black trees
+# would simply vanish, so mountains are mixed toward the background to recede
+# and trees are left at full strength to come forward. That reads correctly on
+# a pale sky and inverts sensibly on a dark one.
+MTN_RIDGE = 0.35                 # how far the ridgeline sits toward the sky
+# The two flat faces, as a distance from the SKY - so the lit face is the one
+# mixed LESS far toward it, whichever way round sky and silhouette happen to be.
+# Separated enough to read as lit and shadow, but both kept well away from full
+# strength: the trees fill solid as the progress indicator, so anything
+# approaching their weight up here costs the read on mountains_forest. The gap
+# between the two carries the facet; their distance from the sky carries depth.
+MTN_LIT, MTN_SHADOW = 0.68, 0.87
+MTN_RIDGE_FACE = 0.52            # a fill already defines the ridge - the
+                                 # stroke only needs to keep the edge crisp
+TREE_FAINT = 0.62                # an unplayed tree, when drawn faint. Further
+                                 # toward the sky than this and it holds on the
+                                 # night sky but washes out on Canopy, where
+                                 # amber into green loses contrast fast
+LW_RIDGE, LW_CREASE = 4.5, 3.5   # design units
+LW_TREE, LW_HOUSE = 3.5, 4.0
+
+
+def _lum(c):
+    v = [x / 255.0 for x in rgb(c)]
+    v = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in v]
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
+
+
+def _depth(t, col, bg):
+    """Scale a mix-toward-the-sky by how much contrast there is to spend.
+
+    A bright foreground on a dark sky can be pushed a long way back and still
+    read. A mid-toned accent on that same sky goes muddy at the identical
+    setting - which left the mountains behind the played half almost black
+    while the unplayed half kept its two tones. Measuring the contrast instead
+    of hard-coding the amount keeps both halves at a comparable weight, in any
+    palette.
+    """
+    a, b = _lum(col), _lum(bg)
+    c = (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    return t * max(0.60, min(1.0, (c / 8.0) ** 0.5))
+
+
+def _pts(poly, k):
+    """Design units to supersampled image coordinates."""
+    return [(x * k * SS, y * k * SS) for x, y in poly]
+
+
+def _stroke(dr, poly, k, col, lw, close=False):
+    p = _pts(poly, k)
+    if close:
+        p = p + [p[0]]
+    if len(p) < 2:
+        return
+    dr.line(p, fill=rgb(col), width=max(1, int(round(lw * k * SS))),
+            joint="curve")
+
+
+def _band_col(bands, x, k, fallback):
+    """The colour the playback cycle is showing at this x."""
+    if not bands:
+        return fallback
+    px = x * k
+    for edge, col in bands:
+        if px <= edge:
+            return col
+    return bands[-1][1]
+
+
+def draw_scene(dr, sc, W, H, col, bg, played=False, face="outline",
+               ahead="outline", filled=False, bands=None):
+    """One generative silhouette, back to front.
+
+    `col` is the state colour: the foreground ahead of the playhead, the accent
+    behind it. The two layers are otherwise identical, so the sliding mask in
+    the video turns one into the other exactly where the playhead is.
+
+    Shapes are filled with the SKY before they are stroked. That is what gives
+    a nearer shape occlusion over a further one without a vector clipper, and
+    it is why an outline-only mountain still hides the range behind it.
+    """
+    k = W / 1280.0
+
+    for m in sc.get("mountains", []):
+        c = _band_col(bands, m["cx"], k, col)
+        if face == "twotone":
+            # both faces stay washed toward the sky: the trees fill solid as
+            # the progress indicator, and if the mountains fill at anything
+            # like full strength mountains_forest turns to mud
+            dr.polygon(_pts(m["shadow"], k), fill=mix(c, bg, _depth(MTN_SHADOW, c, bg)))
+            dr.polygon(_pts(m["lit"], k), fill=mix(c, bg, _depth(MTN_LIT, c, bg)))
+        else:
+            dr.polygon(_pts(m["poly"], k), fill=rgb(bg))
+        ridge = mix(c, bg, _depth(MTN_RIDGE_FACE if face == "twotone"
+                                  else MTN_RIDGE, c, bg))
+        _stroke(dr, m["poly"][:-1], k, ridge, LW_RIDGE)   # flanks, not the base
+        _stroke(dr, m["crease"] if face == "twotone" else m["spur"],
+                k, ridge, LW_CREASE)
+
+    for t in sc.get("trees", []):
+        c = _band_col(bands, t["cx"], k, col)
+        if played:
+            dr.polygon(_pts(t["poly"], k), fill=rgb(c))
+        elif ahead == "faint":
+            dr.polygon(_pts(t["poly"], k), fill=mix(c, bg, _depth(TREE_FAINT, c, bg)))
+        else:
+            dr.polygon(_pts(t["poly"], k), fill=rgb(bg))
+            _stroke(dr, t["poly"], k, c, LW_TREE, close=True)
+
+    # houses, then the street trees in front of them. Both take the same fill
+    # treatment: in a town the whole row is what the playhead recolours, so a
+    # tree filling on the forest's schedule would fight that read.
+    town = []
+    for h in sc.get("houses", []):
+        # chimney first, house over it: the stack runs down to the ground so it
+        # is never left hanging, and the body then hides everything below the
+        # roof it pokes through
+        town += [(p, h["cx"]) for p in
+                 ([h["chimney"]] if h.get("chimney") else []) + [h["poly"]]]
+    town += [(t["poly"], t["cx"]) for t in sc.get("town_trees", [])]
+    for poly, cx in town:
+        c = _band_col(bands, cx, k, col)
+        if filled:
+            dr.polygon(_pts(poly, k), fill=rgb(c))
+        else:
+            dr.polygon(_pts(poly, k), fill=rgb(bg))
+            _stroke(dr, poly, k, c, LW_HOUSE, close=True)
+
+
+def progress_composite(bone, clay, frac, out):
+    """Bone left of the playhead replaced by clay, exactly as ffmpeg's sliding
+    mask does it. Lets a still show a mid-playback frame without an encode."""
+    b = Image.open(bone).convert("RGB")
+    c = Image.open(clay).convert("RGB")
+    x = max(0, min(b.width, int(round(b.width * frac))))
+    if x:
+        b.paste(c.crop((0, 0, x, b.height)), (0, 0))
+    b.save(out)
+    return out
 
 
 def draw_banded(dr, y0, amp, lv, W, sw, mode, bands, filled=False, baseline=None):

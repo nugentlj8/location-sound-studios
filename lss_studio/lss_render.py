@@ -12,11 +12,14 @@ import argparse, calendar, datetime, json, math, os, shutil, subprocess, sys, ti
 import numpy as np
 import lss_presets as presets_mod
 import lss_draw as D
+import lss_scene as scene_mod
 from PIL import Image, ImageDraw, ImageFont
 
 INK, BONE, CLAY, HOT = "#13232E", "#F0E7D6", "#CF7A34", "#F5C98A"
 FONT = None                      # resolved at runtime
-LO_DB, HI_DB = -60.0, -6.0       # fixed-scale window
+# The loudness-to-height mapping lives in lss_scene so the towers, the mountain
+# summits and the treeline all answer to the same --scale and --dynamics.
+LO_DB, HI_DB = scene_mod.LO_DB, scene_mod.HI_DB
 
 DEFAULT_OUT = r"Z:\Sounds of the City\LSS Renders"
 DEFAULT_IN = r"Z:\Sounds of the City\FLAC Export"
@@ -52,8 +55,8 @@ def default_outdir(presets=None):
         pass
     return DEFAULT_OUT
 LV_MIN, LV_MAX = -0.45, 0.95     # roofline level range
-DYNAMICS = {"Natural": (5, 95), "More": (12, 88), "Most": (20, 80)}
-SKYGAMMA = {"Natural": 1.2, "More": 1.6, "Most": 2.2}
+DYNAMICS = scene_mod.DYNAMICS
+SKYGAMMA = scene_mod.SKYGAMMA
 # Fixed tower counts, independent of file length, so tower WIDTH is consistent
 # across every video. "Auto" grows slowly with duration but stays in a band
 # that always reads as a skyline.
@@ -195,32 +198,24 @@ def to_levels(db, n, scale="Skyline (rank)", dynamics="More", align=True,
             else:
                 lin = 10 ** (seg / 20.0)
                 d[i] = 20 * np.log10(np.sqrt((lin ** 2).mean()) + 1e-12)
-    if scale == "Skyline (rank)":
-        # every block keeps its true loudness ORDER; the curve gives a skyline
-        # profile - many low buildings, a few towers - whatever the source
-        # dynamics were. Ratios are not preserved; ranking is.
-        rank = d.argsort().argsort() / max(1, len(d) - 1)
-        x = rank ** SKYGAMMA.get(dynamics, 1.6)
-    elif scale == "Fixed loudness":
-        x = np.clip((d - LO_DB) / (HI_DB - LO_DB), 0, 1)
-    else:
-        p = DYNAMICS.get(dynamics, DYNAMICS["More"])
-        lo, hi = float(np.percentile(d, p[0])), float(np.percentile(d, p[1]))
-        if hi - lo < 3.0:
-            mid = (hi + lo) / 2.0
-            lo, hi = mid - 1.5, mid + 1.5
-        x = np.clip((d - lo) / (hi - lo), 0, 1)
+    # 'Skyline (rank)' keeps every block's true loudness ORDER and gives a
+    # skyline profile - many low buildings, a few towers - whatever the source
+    # dynamics were. Ratios are not preserved; ranking is.
+    x = scene_mod.map_db(d, scale, dynamics)
     return (LV_MIN + x * (LV_MAX - LV_MIN)).round(3).tolist()
 
 
 # ----------------------------------------------------------------- drawing
 # ----------------------------------------------------------------- outputs
-def compose(cfg, lv, W, H, line_col, out, time_text=None):
+def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False):
     """The single composition used for both the thumbnail and the video frames.
 
     Laid out in 1280x720 design units and scaled by k, so the video is the
     thumbnail at a larger size. `time_text` is drawn only for the thumbnail;
     the video leaves that slot empty and ffmpeg draws a live clock there.
+
+    `played` selects which side of the playhead this frame represents: the
+    video builds one of each and lets the sliding mask cut between them.
     """
     k = W / 1280.0
     acc = cfg["accent"]
@@ -232,19 +227,27 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None):
     filled = bool(cfg.get("filled", False))
     img, dr = D.new_canvas(W, H, bg)
 
-    lay = D.row_layout(H, nrows, filled, top=0.66, bot=0.95)
-    cols = [line_col if line_col != "__cycle__" else cfg["accent"]] * nrows
-    step = (W + 60) / len(lv)
-    lw = max(5.0 * k, min(14.0 * k, step * 0.30))
     bands = cfg.get("_bands") if line_col == "__cycle__" else None
-    for (y0, amp), c in zip(lay, cols):
-        if bands:
-            D.draw_banded(dr, y0, amp, lv, W, lw, mode, bands,
-                          filled=filled, baseline=H + 10)
-        elif filled:
-            D.draw_filled(dr, y0, amp, lv, W, H + 10, c, mode)
-        else:
-            D.draw_line(dr, y0, amp, lv, W, c, lw, mode)
+    sc = cfg.get("_scene")
+    if sc:
+        D.draw_scene(dr, sc, W, H,
+                     line_col if line_col != "__cycle__" else acc, bg,
+                     played=played, face=cfg.get("mountain_face") or scene_mod.MOUNTAIN_FACE[0],
+                     ahead=cfg.get("tree_ahead") or scene_mod.TREE_AHEAD[0],
+                     filled=filled, bands=bands)
+    else:
+        lay = D.row_layout(H, nrows, filled, top=0.66, bot=0.95)
+        cols = [line_col if line_col != "__cycle__" else cfg["accent"]] * nrows
+        step = (W + 60) / len(lv)
+        lw = max(5.0 * k, min(14.0 * k, step * 0.30))
+        for (y0, amp), c in zip(lay, cols):
+            if bands:
+                D.draw_banded(dr, y0, amp, lv, W, lw, mode, bands,
+                              filled=filled, baseline=H + 10)
+            elif filled:
+                D.draw_filled(dr, y0, amp, lv, W, H + 10, c, mode)
+            else:
+                D.draw_line(dr, y0, amp, lv, W, c, lw, mode)
 
     M = 84 * k
     n = format_number(cfg.get("number", ""), cfg.get("number_style", "No."))
@@ -408,7 +411,8 @@ def video_layers(cfg, lv, W, H, d, dur=0):
     cfg = dict(cfg, _bands=bands)
     fg = cfg.get("foreground") or BONE
     for name, col in (("bone", fg), ("clay", "__cycle__" if bands else cfg["accent"])):
-        paths[name] = compose(cfg, lv, W, H, col, os.path.join(d, f"_{name}.png"))
+        paths[name] = compose(cfg, lv, W, H, col, os.path.join(d, f"_{name}.png"),
+                              played=(name == "clay"))
     paths["mhard"] = D.solid_mask(W, H, os.path.join(d, "_mhard.png"))
     return paths
 
@@ -494,6 +498,12 @@ def _sidecar(cfg, lv, dur, scale, dyn, n):
             "number_style": cfg.get("number_style"),
         },
         "look": {
+            "scene": cfg.get("scene", ""),
+            "style": cfg.get("style", ""),
+            "detail": cfg.get("detail", "Default"),
+            "seed": f"{cfg['_scene']['seed']:016x}" if cfg.get("_scene") else "",
+            "tree_ahead": cfg.get("tree_ahead") or scene_mod.TREE_AHEAD[0],
+            "mountain_face": cfg.get("mountain_face") or scene_mod.MOUNTAIN_FACE[0],
             "towers": cfg.get("towers", "Default"),
             "tower_count": n,
             "geometry": cfg.get("geometry", "steps"),
@@ -565,11 +575,37 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     n = tower_count(cfg.get("towers", "Default"), dur)
     lv = to_levels(db, n, scale, dyn, align=cfg.get("align_loud", True), stat=stat)
 
+    style = cfg.get("style") or scene_mod.DEFAULT_STYLE.get(
+        cfg.get("scene", "town"), "blocks")
+    cfg["style"] = style
+    if style in scene_mod.SILHOUETTE:
+        # built once, in design units, and reused by the thumbnail and both
+        # video layers - so all three are one shape at three sizes
+        cfg["_scene"] = scene_mod.build(style, db, lv,
+                                        detail=cfg.get("detail", "Default"),
+                                        scale=scale, dynamics=dyn)
+        progress(f"Style {style}: {len(cfg['_scene']['mountains'])} summits, "
+                 f"{len(cfg['_scene']['trees'])} trees, "
+                 f"{len(cfg['_scene']['houses'])} houses "
+                 f"(seed {cfg['_scene']['seed']:016x})")
+
     progress("Building thumbnail…")
     tw = int(cfg.get("thumb_width", 1920))
-    thumb = compose(cfg, lv, tw, round(tw * 9 / 16), cfg["foreground"],
-                    os.path.join(outdir, f"{slug}_thumb.png"),
-                    time_text=cfg["start"])
+    th = round(tw * 9 / 16)
+    thumb_path = os.path.join(outdir, f"{slug}_thumb.png")
+    frac = float(cfg.get("progress", 0.0) or 0.0)
+    if frac > 0:
+        # the same two layers the video uses, cut at a fixed x instead of a
+        # moving one - a mid-playback frame without waiting for an encode
+        b = compose(cfg, lv, tw, th, cfg["foreground"],
+                    os.path.join(work, "_t_bone.png"), time_text=cfg["start"])
+        c = compose(cfg, lv, tw, th, cfg["accent"],
+                    os.path.join(work, "_t_clay.png"), time_text=cfg["start"],
+                    played=True)
+        thumb = D.progress_composite(b, c, frac, thumb_path)
+    else:
+        thumb = compose(cfg, lv, tw, th, cfg["foreground"], thumb_path,
+                        time_text=cfg["start"])
 
     if cfg.get("thumb_only"):
         json.dump(_sidecar(cfg, lv, dur, scale, dyn, n),
@@ -644,6 +680,27 @@ def main():
                    help="tower width: Thick, Default, Thin, Fine, or Auto")
     a.add_argument("--dynamics", default="More", choices=list(DYNAMICS))
     a.add_argument("--scale", default="Skyline (rank)", choices=SCALES)
+    a.add_argument("--style", default="",
+                   help="silhouette shape. nature: "
+                        + ", ".join(scene_mod.SCENE_STYLES["nature"])
+                        + "; town: " + ", ".join(scene_mod.SCENE_STYLES["town"])
+                        + ". Defaults to the series' own (topo or blocks)")
+    a.add_argument("--detail", default="Default",
+                   help="how much shape the silhouette styles carry: "
+                        + ", ".join(scene_mod.DETAIL) + ", or a number like "
+                        "1.2. Counts features, not pixels, so a thumbnail and "
+                        "the video read the same")
+    a.add_argument("--tree-ahead", default=scene_mod.TREE_AHEAD[0],
+                   choices=scene_mod.TREE_AHEAD,
+                   help="how a tree looks before the playhead reaches it")
+    a.add_argument("--mountain-face", default=scene_mod.MOUNTAIN_FACE[0],
+                   choices=scene_mod.MOUNTAIN_FACE,
+                   help="outline: ridgeline only; twotone: flat lit and shadow "
+                        "faces, kept washed toward the sky so the trees stay "
+                        "the thing that reads as progress")
+    a.add_argument("--progress", type=float, default=0.0,
+                   help="render the thumbnail as a mid-playback frame, 0-1, "
+                        "instead of the unplayed state")
     a.add_argument("--rows", type=int, default=1, choices=[1, 2, 3, 4, 5])
     a.add_argument("--filled", action="store_true")
     a.add_argument("--outname", default="")
@@ -663,9 +720,13 @@ def main():
     n = a.parse_args()
     P = presets_mod.load()
     if n.list_presets:
-        print("series:", ", ".join(presets_mod.series_names(P)))
+        for s in presets_mod.series_names(P):
+            sc = presets_mod.series_scene(s, P)
+            print(f"series: {s}  [{sc}]  styles: "
+                  + ", ".join(scene_mod.SCENE_STYLES[sc]))
         print("themes:", ", ".join(presets_mod.theme_names(P)))
         print("colors:", ", ".join(presets_mod.color_preset_names(P)))
+        print("detail:", ", ".join(scene_mod.DETAIL) + ", or a number")
         return
     missing = [k for k in ("audio","place","city","conditions","date","start")
                if not getattr(n, k)]
@@ -690,6 +751,16 @@ def main():
     cfg["accent"], cfg["accent2"] = acc, acc2
     cfg["outdir"] = n.outdir or default_outdir(P)
     cfg["geometry"] = presets_mod.series_geometry(n.preset, P)
+    cfg["scene"] = presets_mod.series_scene(n.preset, P)
+    cfg["style"] = n.style or scene_mod.DEFAULT_STYLE.get(cfg["scene"], "blocks")
+    err = scene_mod.check(cfg["scene"], cfg["style"], n.rows, n.filled,
+                          n.progress)
+    if err:
+        a.error(err)
+    try:
+        scene_mod.resolve_detail(n.detail)
+    except ValueError as e:
+        a.error(str(e))
     cfg["align_loud"] = not n.no_align
     cfg["height_stat"] = n.height_stat
     cfg["towers"] = n.towers

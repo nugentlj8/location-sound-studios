@@ -28,8 +28,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 RAW = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{BRANCH}/lss_studio"
 
 # Files that make up the program. The updater replaces exactly these.
-FILES = ["lss_render.py", "lss_draw.py", "lss_presets.py", "lss_studio.py",
-         "lss_update.py", "VERSION"]
+FILES = ["lss_render.py", "lss_draw.py", "lss_scene.py", "lss_presets.py",
+         "lss_studio.py", "lss_update.py", "VERSION"]
 
 # lss_presets.json is intentionally NOT auto-updated: the user edits it to add
 # their own presets, and we must never overwrite their work. New default
