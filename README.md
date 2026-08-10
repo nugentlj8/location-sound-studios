@@ -123,8 +123,21 @@ Leave it on **None** to keep the series colour, exactly as before.
 A seasonal **Occasion** keeps its own accent and colour cycling on top of whichever sky the
 preset chose, so Night + 4th of July is still the red/white/blue cycle over a night sky.
 
-**Custom sky** overrides the preset. Fill in the background and, if you want, the silhouette
-colour; leave the second box blank and it picks whichever of bone or ink stays readable.
+### Custom colours
+
+The four **Custom** rows — sky, silhouette, accent, accent 2 — override whichever preset is
+chosen. Leave one blank and it follows the preset; leave the silhouette blank in particular and it
+picks whichever of bone or ink stays readable on your sky, so a custom background can never render
+the skyline invisible.
+
+Each row has a dropdown of every colour the presets, series and occasions already use, named and
+with its hex — "Canopy sky #357A2B", "Night sky #13232E" — so a look can be built out of colours
+already known to work together. Picking one fills the hex box; typing a code in the box directly
+still works and switches the dropdown to **Custom…**. Type a code that happens to be one of the
+named colours and the dropdown says so. The swatch beside each box shows the colour you'll get.
+
+The list is read from the presets themselves, so a colour preset you add to `COLOR_PRESETS` or a
+series you add to `lss_presets.json` appears in all four dropdowns with no further work.
 
 To add your own preset, edit `COLOR_PRESETS` at the top of `lss_studio/lss_presets.py` — nothing
 in the render code needs touching. You can also add a `"colors"` block to `lss_presets.json`,

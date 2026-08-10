@@ -80,6 +80,12 @@ COLOR_PRESETS = {
 
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
+# The four colour slots a preset can fill, in the order they sit on screen -
+# sky behind, silhouette in front, then the accents the playhead reveals. Used
+# to name the colours in palette() below.
+COLOR_ROLES = (("background", "sky"), ("foreground", "skyline"),
+               ("accent", "accent"), ("accent2", "accent 2"))
+
 
 def load():
     try:
@@ -114,6 +120,40 @@ def color_preset_names(p):
 
 def valid_hex(s):
     return bool(HEX.match(s.strip())) if s else False
+
+
+def palette(presets):
+    """Every colour the presets already use, as [(label, "#RRGGBB")].
+
+    Read straight off the same structures the renderer resolves against, so a
+    look added to COLOR_PRESETS or a series added to lss_presets.json turns up
+    in the picker without the GUI being touched.
+
+    De-duplicated by colour, first name wins: the colour presets come first
+    because their names say what the colour IS ("Canopy sky"), where a series
+    or occasion name says what it is FOR. Labels carry the hex so the list is
+    still readable where a swatch is not available.
+    """
+    out, seen = [], set()
+
+    def add(label, h):
+        h = (h or "").strip().upper()
+        if valid_hex(h) and h not in seen:
+            seen.add(h)
+            out.append((f"{label} {h}", h))
+
+    for name, p in (presets.get("colors") or COLOR_PRESETS).items():
+        for key, role in COLOR_ROLES:
+            add(f"{name} {role}", p.get(key, ""))
+    for name, s in (presets.get("series") or {}).items():
+        add(name, s.get("accent", ""))
+        add(f"{name} accent 2", s.get("accent2", ""))
+    for name, t in (presets.get("themes") or {}).items():
+        add(name, t.get("accent", ""))
+        add(f"{name} accent 2", t.get("accent2", ""))
+        for i, c in enumerate(t.get("cycle") or [], 1):
+            add(f"{name} cycle {i}", c)
+    return out
 
 
 def _lum(h):

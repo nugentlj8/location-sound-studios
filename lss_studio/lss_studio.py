@@ -23,6 +23,14 @@ DEFAULT_IN = lss_render.DEFAULT_IN
 PRESETS = lss_presets.load()
 
 BG, FG, ACC, FIELD = "#13232E", "#F0E7D6", "#CF7A34", "#1D3140"
+EDGE = "#3A4E5C"                 # swatch border, so a dark colour still shows
+
+# Every colour the presets already use, offered in each custom-colour dropdown.
+# Derived, never hand-copied - add a preset and it appears here.
+PALETTE = lss_presets.palette(PRESETS)
+PALETTE_HEX = dict(PALETTE)                      # label -> colour
+PALETTE_NAME = {h: l for l, h in PALETTE}        # colour -> label
+CUSTOM = "Custom…"
 
 SCALES = ["Skyline (rank)", "Auto (percentile)", "Fixed loudness"]
 SIZES = {"1440p (recommended)": (2560, 1440),
@@ -150,24 +158,13 @@ class App:
                   foreground="#7d93a3").pack(side="left")
         r += 1
 
-        ttk.Label(f, text="Custom accents").grid(row=r, column=0, sticky="w",
-                                                 padx=(0, 12), pady=4)
-        cf = ttk.Frame(f)
-        cf.grid(row=r, column=1, columnspan=2, sticky="ew", pady=4)
-        self.cust_a = ttk.Entry(cf, width=11); self.cust_a.pack(side="left")
-        self.cust_b = ttk.Entry(cf, width=11); self.cust_b.pack(side="left", padx=(8, 0))
-        ttk.Label(cf, text="  #RRGGBB — leave blank to use the preset",
-                  foreground="#7d93a3").pack(side="left")
-        r += 1
-
-        ttk.Label(f, text="Custom sky").grid(row=r, column=0, sticky="w",
-                                             padx=(0, 12), pady=4)
-        bf = ttk.Frame(f)
-        bf.grid(row=r, column=1, columnspan=2, sticky="ew", pady=4)
-        self.cust_bg = ttk.Entry(bf, width=11); self.cust_bg.pack(side="left")
-        self.cust_fg = ttk.Entry(bf, width=11); self.cust_fg.pack(side="left", padx=(8, 0))
-        ttk.Label(bf, text="  background, silhouette — blank follows the colours",
-                  foreground="#7d93a3").pack(side="left")
+        self.cust_bg = self._color_row(f, r, "Custom sky"); r += 1
+        self.cust_fg = self._color_row(f, r, "Custom silhouette"); r += 1
+        self.cust_a = self._color_row(f, r, "Custom accent"); r += 1
+        self.cust_b = self._color_row(f, r, "Custom accent 2"); r += 1
+        ttk.Label(f, text="Pick a colour already in use, or type #RRGGBB. "
+                          "Blank follows the colours above.",
+                  foreground="#7d93a3").grid(row=r, column=1, sticky="w", pady=(0, 6))
         r += 1
         self.size = self._combo(f, r, "Resolution", list(SIZES), list(SIZES)[0]); r += 1
         self.scale = self._combo(f, r, "Height scaling", SCALES, SCALES[0]); r += 1
@@ -274,6 +271,49 @@ class App:
         c.set(default)
         c.grid(row=r, column=1, columnspan=2, sticky="ew", pady=4)
         return c
+
+    def _color_row(self, f, r, label):
+        """Swatch, hex field and a dropdown of the colours already in use.
+
+        The FIELD is the single source of truth - the dropdown only ever writes
+        into it, and the swatch and the dropdown both follow whatever it holds.
+        So a hex typed by hand wins, and the two can never disagree with it.
+
+        (No swatch beside each dropdown entry: a Tk listbox draws text only, and
+        the popup a ttk.Combobox uses is a plain listbox. The hex is in every
+        label instead, and the swatch here shows the choice.)
+        """
+        ttk.Label(f, text=label).grid(row=r, column=0, sticky="w", padx=(0, 12), pady=4)
+        box = ttk.Frame(f)
+        box.grid(row=r, column=1, columnspan=2, sticky="ew", pady=4)
+        sw = tk.Frame(box, width=20, height=20, bg=FIELD,
+                      highlightthickness=1, highlightbackground=EDGE)
+        sw.pack(side="left")
+        sw.pack_propagate(False)
+        var = tk.StringVar()
+        e = ttk.Entry(box, textvariable=var, width=11)
+        e.pack(side="left", padx=(8, 0))
+        c = ttk.Combobox(box, values=[l for l, _ in PALETTE] + [CUSTOM],
+                         state="readonly", width=30)
+        c.set(CUSTOM)
+        c.pack(side="left", padx=(8, 0))
+        c.bind("<<ComboboxSelected>>",
+               lambda _evt, c=c, var=var, e=e: self._color_picked(c, var, e))
+        var.trace_add("write",
+                      lambda *_a, var=var, c=c, sw=sw: self._color_sync(var, c, sw))
+        return e
+
+    def _color_picked(self, combo, var, entry):
+        h = PALETTE_HEX.get(combo.get())
+        if h:
+            var.set(h)
+        else:
+            entry.focus_set()      # "Custom…" - the field is theirs to type in
+
+    def _color_sync(self, var, combo, swatch):
+        h = var.get().strip().upper()
+        combo.set(PALETTE_NAME.get(h, CUSTOM))
+        swatch.config(bg=h if lss_presets.valid_hex(h) else FIELD)
 
     def _file_row(self, f, r, label, btn, cmd):
         ttk.Label(f, text=label).grid(row=r, column=0, sticky="w", padx=(0, 12), pady=4)
