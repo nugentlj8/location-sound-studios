@@ -18,7 +18,6 @@ except Exception:
     lss_update = None
 
 DEFAULT_IN = lss_render.DEFAULT_IN
-DEFAULT_OUT = lss_render.DEFAULT_OUT
 
 PRESETS = lss_presets.load()
 
@@ -104,7 +103,8 @@ class App:
                   foreground="#7d93a3").grid(row=r, column=1, sticky="w", pady=(0, 6))
         r += 1
         self.outdir = self._file_row(f, r, "Output folder", "Choose…", self.pick_out)
-        self.outdir.insert(0, lss_render.usable(DEFAULT_OUT, "LSS Renders"))
+        self.outdir.insert(0, lss_render.usable(lss_render.default_outdir(PRESETS),
+                                                "LSS Renders"))
         r += 1
 
         ttk.Separator(f).grid(row=r, column=0, columnspan=3, sticky="ew", pady=12)
@@ -123,8 +123,13 @@ class App:
 
         sn = lss_presets.series_names(PRESETS)
         tn = lss_presets.theme_names(PRESETS)
+        cn = lss_presets.color_preset_names(PRESETS)
         self.series = self._combo(f, r, "Series", sn, sn[0]); r += 1
         self.theme = self._combo(f, r, "Occasion", tn, tn[0]); r += 1
+        self.colors = self._combo(f, r, "Colours", cn, cn[0]); r += 1
+        ttk.Label(f, text="Sets the sky. The occasion keeps its own accent.",
+                  foreground="#7d93a3").grid(row=r, column=1, sticky="w", pady=(0, 6))
+        r += 1
         ttk.Label(f, text="Number").grid(row=r, column=0, sticky="w",
                                          padx=(0, 12), pady=4)
         nf = ttk.Frame(f)
@@ -139,13 +144,23 @@ class App:
                   foreground="#7d93a3").pack(side="left")
         r += 1
 
-        ttk.Label(f, text="Custom colours").grid(row=r, column=0, sticky="w",
+        ttk.Label(f, text="Custom accents").grid(row=r, column=0, sticky="w",
                                                  padx=(0, 12), pady=4)
         cf = ttk.Frame(f)
         cf.grid(row=r, column=1, columnspan=2, sticky="ew", pady=4)
         self.cust_a = ttk.Entry(cf, width=11); self.cust_a.pack(side="left")
         self.cust_b = ttk.Entry(cf, width=11); self.cust_b.pack(side="left", padx=(8, 0))
         ttk.Label(cf, text="  #RRGGBB — leave blank to use the preset",
+                  foreground="#7d93a3").pack(side="left")
+        r += 1
+
+        ttk.Label(f, text="Custom sky").grid(row=r, column=0, sticky="w",
+                                             padx=(0, 12), pady=4)
+        bf = ttk.Frame(f)
+        bf.grid(row=r, column=1, columnspan=2, sticky="ew", pady=4)
+        self.cust_bg = ttk.Entry(bf, width=11); self.cust_bg.pack(side="left")
+        self.cust_fg = ttk.Entry(bf, width=11); self.cust_fg.pack(side="left", padx=(8, 0))
+        ttk.Label(bf, text="  background, silhouette — blank follows the colours",
                   foreground="#7d93a3").pack(side="left")
         r += 1
         self.size = self._combo(f, r, "Resolution", list(SIZES), list(SIZES)[0]); r += 1
@@ -365,17 +380,25 @@ class App:
         if err:
             messagebox.showwarning("Check the form", err)
             return
-        custom = {"accent": self.cust_a.get(), "accent2": self.cust_b.get()}
-        for box, val in ((self.cust_a, custom["accent"]), (self.cust_b, custom["accent2"])):
+        custom = {"accent": self.cust_a.get(), "accent2": self.cust_b.get(),
+                  "background": self.cust_bg.get(), "foreground": self.cust_fg.get()}
+        for val in custom.values():
             if val.strip() and not lss_presets.valid_hex(val):
                 messagebox.showwarning("Check the form",
                                        f"'{val}' is not a colour like #CF7A34.")
                 return
         series_name, acc, acc2 = lss_presets.resolve(
             self.series.get(), self.theme.get(), PRESETS, custom)
+        bg, fg, acc, acc2 = lss_presets.resolve_colors(
+            self.colors.get(), self.theme.get(), PRESETS, acc, acc2, custom)
         geometry = lss_presets.series_geometry(self.series.get(), PRESETS)
         _suf, cyc, cmin = lss_presets.theme_extras(self.theme.get(), PRESETS)
-        low = [c for c in (acc, acc2) if c and lss_presets.contrast_on_ink(c) < 4.5]
+        # Only second-guess colours typed in by hand. The built-in presets were
+        # already chosen against measured contrast on rendered frames, and some
+        # lean on hue rather than luminance, so warning about them every render
+        # would be noise.
+        low = [c.strip() for c in (custom["accent"], custom["accent2"])
+               if c.strip() and lss_presets.contrast_on(c.strip(), bg) < 4.5]
         if low:
             if not messagebox.askyesno(
                     "Low contrast",
@@ -395,7 +418,9 @@ class App:
             "series": series_name,
             "number": self.number.get().strip(),
             "number_style": self.numstyle.get(),
+            "colors": self.colors.get(),
             "accent": acc, "accent2": acc2,
+            "background": bg, "foreground": fg,
             "width": w, "height": h, "fps": 10, "geometry": geometry,
             "cycle": cyc, "cycle_minutes": cmin,
             "towers": self.towers.get(), "dynamics": self.dyn.get(),

@@ -24,6 +24,76 @@ setx LSS_FONT "C:\Users\YOU\AppData\Local\Microsoft\Windows\Fonts\BarlowCondense
 
 Open a fresh window afterward. Without it the app falls back to Arial.
 
+## Colours
+
+Pick a **Colours** preset to set the time of day. Each one sets the sky, the silhouette, and the
+accent the playhead reveals, chosen together so the skyline still reads at thumbnail size:
+
+| Preset | Sky | Skyline | Looks like |
+|---|---|---|---|
+| Morning | deep gold | white | low warm sun |
+| Night | deep blue | bone | the original look |
+| Evening | burnt orange | white | sunset |
+| Canopy | deep forest green | amber | lit against foliage |
+
+Presets are deliberately scene-agnostic — the same four work for city, town, nature and spaces,
+because what makes a recording look like a city is the silhouette shape, not the colour. So
+"Roosevelt Row at Morning" and "Roosevelt Row at Night" are clearly different images that both
+still read as the same place.
+
+Leave it on **None** to keep the series colour, exactly as before.
+
+A seasonal **Occasion** keeps its own accent and colour cycling on top of whichever sky the
+preset chose, so Night + 4th of July is still the red/white/blue cycle over a night sky.
+
+**Custom sky** overrides the preset. Fill in the background and, if you want, the silhouette
+colour; leave the second box blank and it picks whichever of bone or ink stays readable.
+
+To add your own preset, edit `COLOR_PRESETS` at the top of `lss_studio/lss_presets.py` — nothing
+in the render code needs touching. You can also add a `"colors"` block to `lss_presets.json`,
+which overrides what ships in code and is never overwritten by an update.
+
+From the command line:
+
+```
+py lss_studio\lss_render.py recording.flac --colors Morning ...
+py lss_studio\lss_render.py recording.flac --background "#F2D289" --accent "#9C4712" ...
+py lss_studio\lss_render.py --list-presets
+```
+
+## Where renders go
+
+By default `Z:\Sounds of the City\LSS Renders`. To send one render somewhere else:
+
+```
+py lss_studio\lss_render.py recording.flac --outdir renders ...
+```
+
+To change the default permanently, either set `LSS_OUTDIR`:
+
+```
+setx LSS_OUTDIR "D:\LSS Renders"
+```
+
+or add an `"outdir"` key to `lss_presets.json`. `--outdir` wins over `LSS_OUTDIR`, which wins
+over the JSON key, which wins over the built-in default — so the flag stays a per-run switch and
+never goes sticky.
+
+## Naming
+
+Enter a **Number** and the render folder leads with it, zero-padded so the list still sorts
+correctly past episode 9:
+
+```
+003 - Phoenix Monsoon Ambience/
+  003 - Phoenix Monsoon Ambience_thumb.png
+  003 - Phoenix Monsoon Ambience.mp4
+  003 - Phoenix Monsoon Ambience_render.json
+```
+
+Leave the number blank and folders are named the way they always were. Either way an existing
+folder is never overwritten — a repeat render becomes `..._2`.
+
 ## Updates
 
 The app checks this repository for a newer version each time it opens. If one

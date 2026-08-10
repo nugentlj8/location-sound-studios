@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 lss_studio/previous/
 lss_studio/_work/
+renders/
 *.mp4
 *.wav
 *.flac

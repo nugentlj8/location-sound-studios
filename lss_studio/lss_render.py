@@ -31,6 +31,26 @@ def usable(path, fallback_name):
     if looks_windows and not os.path.isdir(path[:2] + os.sep):
         return home
     return path
+
+
+def default_outdir(presets=None):
+    """Where renders land when --outdir is not given.
+
+    LSS_OUTDIR first, then an "outdir" key in lss_presets.json, then the
+    network share. Both of those set a persistent default; --outdir stays the
+    per-run switch so it never goes sticky.
+    """
+    env = os.environ.get("LSS_OUTDIR", "").strip()
+    if env:
+        return env
+    try:
+        p = presets if presets is not None else presets_mod.load()
+        j = (p.get("outdir") or "").strip()
+        if j:
+            return j
+    except Exception:
+        pass
+    return DEFAULT_OUT
 LV_MIN, LV_MAX = -0.45, 0.95     # roofline level range
 DYNAMICS = {"Natural": (5, 95), "More": (12, 88), "Most": (20, 80)}
 SKYGAMMA = {"Natural": 1.2, "More": 1.6, "Most": 2.2}
@@ -204,11 +224,13 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None):
     """
     k = W / 1280.0
     acc = cfg["accent"]
-    slate = BONE if cfg.get("slate_mono") else acc
+    bg = cfg.get("background") or INK
+    fg = cfg.get("foreground") or BONE
+    slate = fg if cfg.get("slate_mono") else acc
     mode = cfg.get("geometry", "steps")
     nrows = int(cfg.get("rows", 1))
     filled = bool(cfg.get("filled", False))
-    img, dr = D.new_canvas(W, H, INK)
+    img, dr = D.new_canvas(W, H, bg)
 
     lay = D.row_layout(H, nrows, filled, top=0.66, bot=0.95)
     cols = [line_col if line_col != "__cycle__" else cfg["accent"]] * nrows
@@ -236,11 +258,11 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None):
             break
         ssize *= 0.94
         strack *= 0.94
-    D.text_run(dr, cfg["series"], ssize, strack, M, 150 * k, BONE, FONT)
+    D.text_run(dr, cfg["series"], ssize, strack, M, 150 * k, fg, FONT)
     if n:
         D.text_run(dr, n, 27 * k, 11 * k, W - M - nw, 150 * k, slate, FONT)
 
-    D.text_run(dr, cfg["place"], 104 * k, 7 * k, M, 296 * k, BONE, FONT)
+    D.text_run(dr, cfg["place"], 104 * k, 7 * k, M, 296 * k, fg, FONT)
     D.text_run(dr, f'{cfg["city"]}  \u00b7  {cfg["conditions"]}',
                31 * k, 8 * k, M, 360 * k, slate, FONT)
     if time_text:
@@ -311,6 +333,44 @@ def format_number(raw, style="No."):
     return tpl.format(n=n)
 
 
+def _safe_name(s):
+    """Drop anything that has no business in a folder name."""
+    return "".join(ch if (ch.isalnum() or ch in " -_") else "" for ch in s).strip()
+
+
+def episode_prefix(raw):
+    """'7' -> '007', so folders still sort correctly past episode 9.
+
+    Padded to three digits to match how format_number() already prints them.
+    A non-numeric label ('bonus') is used verbatim - padding it would be
+    meaningless."""
+    raw = _safe_name((raw or "").strip())
+    if not raw:
+        return ""
+    return f"{int(raw):03d}" if raw.isdigit() else raw
+
+
+def output_base(cfg):
+    """Folder name for a render, also used for the files inside it.
+
+    With an episode number:  '003 - Phoenix Monsoon Ambience'
+    Without one:             the original lowercase slug, unchanged.
+    """
+    name = (cfg.get("outname") or cfg.get("place") or "").strip()
+    ep = episode_prefix(cfg.get("number", ""))
+    if not ep:
+        slug = _safe_name(name).replace(" ", "_").lower()
+        return slug or "render"
+    # strip punctuation before case-folding, or "ST. MARY'S" title-cases into
+    # "St MaryS" off the apostrophe
+    name = " ".join(_safe_name(name).split())
+    # place arrives upper-cased for the slate; title-case it so the folder is
+    # readable. An outname typed with deliberate casing is left alone.
+    if name.isupper():
+        name = name.title()
+    return f"{ep} - {name}".strip(" -") if name else ep
+
+
 def clock_box(W, H, sample="06:30 PM"):
     """Position and size for the live clock so it lands exactly where the
     thumbnail draws its static one."""
@@ -346,7 +406,8 @@ def video_layers(cfg, lv, W, H, d, dur=0):
     paths = {}
     bands = make_bands(cfg, W, dur)
     cfg = dict(cfg, _bands=bands)
-    for name, col in (("bone", BONE), ("clay", "__cycle__" if bands else cfg["accent"])):
+    fg = cfg.get("foreground") or BONE
+    for name, col in (("bone", fg), ("clay", "__cycle__" if bands else cfg["accent"])):
         paths[name] = compose(cfg, lv, W, H, col, os.path.join(d, f"_{name}.png"))
     paths["mhard"] = D.solid_mask(W, H, os.path.join(d, "_mhard.png"))
     return paths
@@ -438,6 +499,9 @@ def _sidecar(cfg, lv, dur, scale, dyn, n):
             "geometry": cfg.get("geometry", "steps"),
             "rows": cfg.get("rows", 1),
             "filled": cfg.get("filled", False),
+            "colors": cfg.get("colors", ""),
+            "background": cfg.get("background", INK),
+            "foreground": cfg.get("foreground", BONE),
             "accent": cfg.get("accent"),
             "accent2": cfg.get("accent2", ""),
             "cycle": cfg.get("cycle", []),
@@ -467,12 +531,16 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     FONT = find_font()
     if not shutil.which("ffmpeg"):
         raise SystemExit("ffmpeg not found on PATH.")
+    # settle the sky before anything draws, so every caller - GUI, CLI, or a
+    # direct run() - lands on the same colours. Copied, not mutated in place.
+    cfg = dict(cfg)
+    cfg["background"] = cfg.get("background") or INK
+    cfg["foreground"] = (cfg.get("foreground")
+                         or presets_mod.auto_foreground(cfg["background"]))
     base = cfg["outdir"]
     os.makedirs(base, exist_ok=True)
 
-    slug = (cfg.get("outname") or cfg["place"]).strip()
-    slug = "".join(ch if (ch.isalnum() or ch in " -_") else "" for ch in slug)
-    slug = slug.replace(" ", "_").lower() or "render"
+    slug = output_base(cfg)
 
     # each render gets its own folder; never overwrite an earlier one
     outdir, n = os.path.join(base, slug), 2
@@ -499,7 +567,7 @@ def run(cfg, progress=lambda s: None, on_progress=None):
 
     progress("Building thumbnail…")
     tw = int(cfg.get("thumb_width", 1920))
-    thumb = compose(cfg, lv, tw, round(tw * 9 / 16), BONE,
+    thumb = compose(cfg, lv, tw, round(tw * 9 / 16), cfg["foreground"],
                     os.path.join(outdir, f"{slug}_thumb.png"),
                     time_text=cfg["start"])
 
@@ -533,6 +601,13 @@ def run(cfg, progress=lambda s: None, on_progress=None):
 
 
 def main():
+    # NUM_STYLES carries the numero sign, and argparse prints it in --number-style's
+    # choices. A cp1252 console cannot encode it, which killed --help outright.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, OSError):
+            pass
     a = argparse.ArgumentParser(description="Render a Location Sound Studios video.")
     a.add_argument("audio", nargs="?")
     a.add_argument("--place")
@@ -544,11 +619,23 @@ def main():
     a.add_argument("--number-style", default="No.", choices=list(NUM_STYLES))
     a.add_argument("--accent", default="")
     a.add_argument("--accent2", default="")
+    a.add_argument("--background", default="",
+                   help="sky colour, e.g. #F2D289 - overrides --colors")
+    a.add_argument("--foreground", default="",
+                   help="silhouette and slate text colour, e.g. #2A2018. "
+                        "Defaults to whichever of bone or ink reads on the "
+                        "background")
+    a.add_argument("--colors", default="None (series colour)",
+                   help="colour preset: Morning, Night, Evening, Canopy. Sets "
+                        "background and foreground; supplies the accent unless "
+                        "a --theme already does")
     a.add_argument("--preset", default="Sounds of the City")
     a.add_argument("--theme", default="None (use series colour)")
     a.add_argument("--cycle-minutes", type=float, default=0.0)
     a.add_argument("--list-presets", action="store_true")
-    a.add_argument("--outdir", default=DEFAULT_OUT)
+    a.add_argument("--outdir", default=None,
+                   help="where renders land. Falls back to LSS_OUTDIR, then an "
+                        '"outdir" key in lss_presets.json, then ' + DEFAULT_OUT)
     a.add_argument("--width", type=int, default=2560)
     a.add_argument("--height", type=int, default=1440)
     a.add_argument("--fps", type=int, default=10)
@@ -578,16 +665,30 @@ def main():
     if n.list_presets:
         print("series:", ", ".join(presets_mod.series_names(P)))
         print("themes:", ", ".join(presets_mod.theme_names(P)))
+        print("colors:", ", ".join(presets_mod.color_preset_names(P)))
         return
     missing = [k for k in ("audio","place","city","conditions","date","start")
                if not getattr(n, k)]
     if missing:
         a.error("missing required: " + ", ".join("--"+m if m!="audio" else "audio"
                                                  for m in missing))
+    for flag in ("accent", "accent2", "background", "foreground"):
+        v = getattr(n, flag)
+        if v and not presets_mod.valid_hex(v):
+            a.error(f"--{flag}: '{v}' is not a colour like #CF7A34")
+    if n.colors not in presets_mod.color_preset_names(P):
+        a.error(f"--colors: unknown preset '{n.colors}'. Choose from: "
+                + ", ".join(presets_mod.color_preset_names(P)))
     cfg = vars(n)
-    name, acc, acc2 = presets_mod.resolve(
-        n.preset, n.theme, P, {"accent": n.accent, "accent2": n.accent2})
-    cfg["series"], cfg["accent"], cfg["accent2"] = name, acc, acc2
+    custom = {"accent": n.accent, "accent2": n.accent2,
+              "background": n.background, "foreground": n.foreground}
+    name, acc, acc2 = presets_mod.resolve(n.preset, n.theme, P, custom)
+    cfg["series"] = name
+    bg, fg, acc, acc2 = presets_mod.resolve_colors(
+        n.colors, n.theme, P, acc, acc2, custom)
+    cfg["background"], cfg["foreground"] = bg, fg
+    cfg["accent"], cfg["accent2"] = acc, acc2
+    cfg["outdir"] = n.outdir or default_outdir(P)
     cfg["geometry"] = presets_mod.series_geometry(n.preset, P)
     cfg["align_loud"] = not n.no_align
     cfg["height_stat"] = n.height_stat
