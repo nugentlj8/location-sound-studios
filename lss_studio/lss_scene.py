@@ -152,27 +152,196 @@ TOWER_LIT_P = 0.30
 # of it is lit - which is the whole difference between a street at night and a
 # downtown at night.
 CITY_MIN_H = 0.075 * DH          # even the quietest block is a BUILDING. The
-CITY_MAX_H = 0.285 * DH          # envelope line is allowed to touch its
+CITY_MAX_H = 0.345 * DH          # envelope line is allowed to touch its
                                  # baseline; a building with windows in it is
-                                 # not, or the street has a hole in it
+                                 # not, or the street has a hole in it.
+                                 #
+                                 # The gap between them is the whole room the
+                                 # recording has to move in, so the MIN stays
+                                 # low: raising it to keep short blocks clear of
+                                 # the near layer cost a tenth of that range,
+                                 # and skyline height is what the render is FOR.
+                                 # A near layer that hides the quiet blocks is a
+                                 # near layer built wrong, not a floor set too
+                                 # low - see FORE_H.
+                                 #
+                                 # The MAX is within a few units of its ceiling
+                                 # and cannot usefully rise: the tallest roof
+                                 # carries the tallest antenna, and that tip has
+                                 # to stay clear of the slate baseline at 360,
+                                 # which puts roof, setback and mast together
+                                 # within about 3 units of the text already.
 CITY_GAP_F = 0.10                # of the slot width, so the blocks read as
                                  # separate buildings without a gappy skyline
+CITY_BLOCK_W = 50.0              # the slot width a city block gets, in design
+                                 # units, independent of how many envelope
+                                 # blocks --towers asked for. The far layer
+                                 # needs its own grain: at the near layer's
+                                 # 30-45u the two read as one layer however
+                                 # they are toned, and it was WIDTH that fixed
+                                 # that, not tone.
+                                 #
+                                 # It is a fixed width rather than a floor on
+                                 # --towers, and that was tried the other way
+                                 # first. The floor cannot work: --towers Thick,
+                                 # the widest preset there is, gives a 47.9u
+                                 # slot, so a 50u floor binds on every preset
+                                 # including that one and they all collapse to
+                                 # the same count. --towers therefore does not
+                                 # set city block width - see the note on it in
+                                 # main(). Set 0 to take one block per envelope
+                                 # block again, which is what blocks and houses
+                                 # still do.
 CITY_SIDE_F = 0.28               # shaded side, as HOUSE_SIDE_F for a house
 CITY_BAY_W, CITY_ROW_H = 13.0, 15.0      # the finer grid
 CITY_OCCUPIED_P = 0.95           # a downtown block is essentially always in use
 CITY_LIT_P = 0.50                # and half of it is lit - "busy" is this number
 CITY_SETBACK_P = 0.42            # chance a roof steps in rather than being flat
+CITY_SHADE_T = 0.40              # only a block this tall earns a shadow face. A
+                                 # short one is already read by its roofline,
+                                 # and faceting every block in the row turns the
+                                 # skyline back into texture
+
+# --- the city's near layer -------------------------------------------------
+# The near end of the SAME downtown - not a second, smaller settlement in front
+# of it. Every part is the city's own: _roofline for the roof, the city's window
+# grid at a fraction of its occupancy. What separates near from far is size,
+# overlap and strength, never the vocabulary. Reach for the town's pitched roofs
+# here and the band reads as a village that a city happens to stand behind.
+#
+# It exists to say the towers are FAR, which is the one thing a single row of
+# blocks on a single baseline cannot say - so it carries no audio whatever.
+# Exactly like the treeline in mountains_forest: every number below comes from
+# the seed alone, so a quiet recording gets the same foreground as a loud one
+# and only the skyline behind it breathes.
+FORE_BASE = GROUND               # 20u below TOWN_BASE, 30u above the frame
+                                 # edge. Two ground lines a short step apart is
+                                 # the whole depth cue; one baseline carrying
+                                 # everything is what made the city read flat.
+FORE_W = (30.0, 45.0)            # design units - about a tower's own 30u, not
+                                 # the 34-104 tried first. Width is the whole
+                                 # difference between a near CITY and a strip of
+                                 # warehouses: a shape five times wider than the
+                                 # towers behind it reads as squat whatever its
+                                 # tone or its window scale, because nothing in a
+                                 # downtown has that proportion. Narrow also
+                                 # means MORE of them, which is what gives the
+                                 # top edge somewhere to put a notch.
+FORE_H = (38.0, 82.0)            # the ordinary run of them. The tallest reach
+                                 # y=608, a little past the shortest tower top
+                                 # at 615.6, so a block in the quietest ~4% of
+                                 # the range can be hidden behind the band. That
+                                 # is the price of keeping CITY_MIN_H low, and
+                                 # it is the right way round: raising the floor
+                                 # to clear the band cost a tenth of the height
+                                 # range, where narrow buildings and deep
+                                 # notches drop the band's average top further
+                                 # for nothing...
+FORE_NOTCH_P = 0.22              # ...and this often, a deep one instead. The
+FORE_NOTCH_H = (14.0, 30.0)      # notches are the point: once the buildings are
+                                 # narrow and touching, an evenly varied top edge
+                                 # stops reading as buildings and becomes a bar
+                                 # across the bottom of the frame. A hole cut
+                                 # right down to 14u is what says these are
+                                 # separate near things rather than one mass, and
+                                 # it lets the skyline show through between them.
+FORE_SLOW_F = 0.45               # how much of the height comes from a smoothed
+                                 # run rather than a per-building draw. Pure
+                                 # independent draws give a comb; a slow
+                                 # component underneath gives the band districts
+                                 # - a taller stretch, then a lower one - which
+                                 # is what a real near skyline has
+FORE_SIDE_F = 0.34               # how much of a near building's width is its
+                                 # shaded side, as CITY_SIDE_F is for a tower.
+                                 # Not snapped to a window column the way the
+                                 # skyline's is: at this grid a near block holds
+                                 # two or three bays, so snapping would put the
+                                 # division on the halfway line every time
+FORE_TREE_SIDE_F = 0.42          # ...and of a crown's width. Nearer the middle
+                                 # than a building's, because a round shape
+                                 # turns away from the light gradually and a
+                                 # terminator far off centre reads as a bite
+                                 # taken out of it rather than as shading
+FORE_STEP = (0.80, 1.00)         # how far to advance, as a fraction of the
+                                 # building's own width - so neighbours touch or
+                                 # overlap by up to 20%, and NEVER leave sky
+                                 # between them. A continuous band is what makes
+                                 # the layer read as one nearer plane instead of
+                                 # a row of shapes each competing with the
+                                 # skyline behind it.
+                                 #
+                                 # The ceiling of 1.00 is what guarantees the
+                                 # continuity; the floor of 0.80 is set by the
+                                 # notches. The silhouette at any x is the MAX
+                                 # over everything covering it, so heavy overlap
+                                 # is an upper envelope - a smoother - and it
+                                 # eats exactly the notches this layer needs. At
+                                 # 20% a notched building still shows 60% of its
+                                 # own width at its own height. The earlier 8-50%
+                                 # is why the top edge came out flat.
+                                 #
+                                 # The skyline itself may not do any of this: x
+                                 # is TIME up there, so sliding one tower into
+                                 # its neighbour's slot would move a loud moment.
+                                 # Nothing down here answers to the recording -
+                                 # _fore() is not even handed the envelope -
+                                 # which is what makes overlap free.
+FORE_BAY_W = CITY_BAY_W * 1.6    # a nearer building has BIGGER windows, and
+FORE_ROW_H = CITY_ROW_H * 1.6    # therefore fewer of them. Pitch is the third
+                                 # depth cue after size and overlap, and the
+                                 # one that does the most work: at the skyline's
+                                 # own 13x15 the near layer carried the same
+                                 # texture as the towers, and two layers with
+                                 # one texture are one layer however their tones
+                                 # are set
+FORE_OCCUPIED_P = 0.92           # MORE lit than the downtown's 0.95 and 0.50,
+FORE_LIT_P = 0.60                # not less: 55% of these panes are lit against
+                                 # the towers' 48%. Held low at first on the
+                                 # theory that a quiet near layer would keep the
+                                 # skyline dominant, which was wrong twice over
+                                 # - one window in twelve read as an abandoned
+                                 # block rather than a restrained one, and the
+                                 # nearer thing is the one you can see INTO. The
+                                 # skyline stays dominant on size and position,
+                                 # which is where dominance actually comes from.
+FORE_TREE_P = 0.14               # chance of a street tree beside a building.
+                                 # Low: the buildings overlap, so trees have no
+                                 # gaps to sit in and simply stand in front -
+                                 # and enough of them at one height stops
+                                 # reading as street trees and starts reading as
+                                 # a hedge drawn across the whole frame
+FORE_TREE_H = 0.105 * DH         # about a short block's height, so it reads
+                                 # against them the way TOWN_TREE_H does a house
 
 # Antennas. Biased to the tall buildings, because that is where they are, and
 # because a mast on a short block just looks like a mistake.
 ANT_MIN_T = 0.45                 # normalised height below which none appear
-ANT_P0, ANT_P1 = 0.15, 0.60      # chance = ANT_P0 + ANT_P1 * normalised height
+ANT_P0, ANT_P1 = 0.22, 0.60      # chance = ANT_P0 + ANT_P1 * normalised height.
+                                 # Raised from 0.15: at the old odds a wide
+                                 # frame came out with five masts, which reads
+                                 # as an accident rather than as a skyline. The
+                                 # beacons are the one thing in the video that
+                                 # moves on its own, so they have to be present
+                                 # enough to notice - but only just. ANT_MAX
+                                 # still stops a Fine skyline becoming a comb.
 ANT_MAX = 14                     # ...but only this many, tallest first, or a
                                  # --towers Fine skyline turns into a comb
-ANT_H = (28.0, 56.0)             # mast height in design units. Much taller
-                                 # than about twelve times its width and it
-                                 # stops reading as a mast and starts reading
-                                 # as a stray pin
+ANT_LEN_F = 0.16                 # A mast is a fraction of ITS OWN building's
+ANT_LEN_JIT = (0.85, 1.15)       # height, give or take. Drawing an absolute
+ANT_LEN = (14.0, 56.0)           # length from the seed and then trimming it to
+                                 # whatever headroom was left over did the exact
+                                 # opposite of what a skyline does: the tallest
+                                 # tower sits closest to the ceiling, so it had
+                                 # the least room and ended up wearing the
+                                 # shortest stub. Scaling instead makes the
+                                 # tallest tower carry the longest antenna,
+                                 # which is the whole reason a mast reads as
+                                 # height at all. The upper bound is fourteen
+                                 # times MAST_W - past that it stops being a
+                                 # mast and becomes a stray pin.
+ANT_CEIL = 389.0                 # a mast is never allowed above this, and a
+ANT_MIN_LEN = 12.0               # building with less than ANT_MIN_LEN of room
+                                 # under it simply goes bare.
 MAST_W = 4.0                     # a RECTANGLE, never a stroke. It stands
                                  # against open sky, so it carries the same
                                  # silhouette-vs-sky contrast every roofline
@@ -197,6 +366,52 @@ BLINK_ON = 2.0                   # seconds lit out of each period, i.e. lit
                                  # up, which reads as a fault; mostly ON reads
                                  # as a lit city with a slow wink in it, and
                                  # keeps the video close to its own thumbnail
+
+
+# --- how high the silhouette may rise, per column --------------------------
+# A single ceiling makes every column pay the WORST column's price, and the
+# slate is not a solid bar: it is text down the left, a clock on the right and
+# a wide hole in between. Measuring where the text actually ends hands that
+# hole back to the skyline.
+#
+# This changes the height a loud passage is ALLOWED, never the loudness that
+# earns it - a quiet block under an empty span is still a quiet block.
+CEIL_SAMPLE = 2.0                # design units between profile samples
+CEIL_CLEAR = 29.0                # air kept under a text baseline, and to its
+                                 # left and right. The old flat 389 was exactly
+                                 # this much under the lowest baseline at 360.
+CEIL_FREE = 0.42 * DH            # ...and the ceiling where nothing is above at
+                                 # all. Not zero: the top of the frame has to
+                                 # stay sky or the slate stops reading as a
+                                 # block sitting on a skyline.
+CEIL_RAMP = 46.0                 # how far the ceiling takes to climb out of a
+                                 # text column. A step would put a cliff in the
+                                 # skyline that no loud moment put there.
+
+
+def ceiling_profile(boxes, free_y=CEIL_FREE, clear=CEIL_CLEAR, ramp=CEIL_RAMP):
+    """The highest a silhouette may rise at each x, from measured text extents.
+
+    `boxes` is (x0, x1, ink_bottom) per run of slate text, in design units.
+    Smoothed so the ceiling ramps rather than steps, then floored by the hard
+    profile again - the smoothing is only ever allowed to push the ceiling DOWN
+    toward the text, never up into it.
+    """
+    xs = np.arange(-60.0, DW + 60.0 + CEIL_SAMPLE, CEIL_SAMPLE)
+    hard = np.full(len(xs), float(free_y))
+    for x0, x1, base in boxes:
+        m = (xs >= x0 - clear) & (xs <= x1 + clear)
+        hard[m] = np.maximum(hard[m], float(base) + clear)
+    soft = smooth(hard, max(1.0, ramp / CEIL_SAMPLE), passes=1)
+    return xs, np.maximum(soft, hard)
+
+
+def ceil_at(prof, x):
+    """The ceiling at one x, or the flat CITY_MAX_H line when there is none."""
+    if prof is None:
+        return TOWN_BASE - CITY_MAX_H
+    xs, p = prof
+    return float(np.interp(x, xs, p))
 
 
 def seed_from(db):
@@ -658,6 +873,24 @@ def _clip_left(poly, xc, base):
     return out
 
 
+def _clip_poly_left(poly, xc):
+    """The part of a CLOSED polygon left of xc, as its own polygon.
+
+    _clip_left is the cheap version, and it needs an outline whose x travels
+    one way only - true of every roofline here and emphatically false of a tree
+    crown, which goes out and comes back. This is the general half-plane cut,
+    used for the shapes that double back.
+    """
+    out = []
+    for a, b in zip(poly, list(poly[1:]) + [poly[0]]):
+        if a[0] <= xc:
+            out.append(a)
+        if (a[0] - xc) * (b[0] - xc) < 0:
+            t = (xc - a[0]) / (b[0] - a[0])
+            out.append((xc, a[1] + (b[1] - a[1]) * t))
+    return out if len(out) >= 3 else None
+
+
 def _houses(lv, detail, rng):
     """Mostly low houses, with a tall block kept for the loudest few percent so
     the skyline stays residential."""
@@ -750,14 +983,21 @@ def _roofline(rng, a, b, top):
             (b - inset, top - rise), (b - inset, top), (b, top)]
 
 
-def _antenna(rng, cx, roof_y):
-    """A plain needle, as (polys, light_rect). Its top segment is the light.
+def _antenna(rng, cx, roof_y, ceil_y=ANT_CEIL):
+    """A plain needle, as (polys, light_rect), or None if there is no room.
 
     Rectangles throughout - see MAST_W. The mast runs a little way below the
     roof so the building drawn over it hides the join rather than leaving the
     pole balanced on the parapet.
+
+    Length comes from the building's own height, so the tallest tower in frame
+    carries the longest mast. The headroom clamp is only a backstop now - the
+    room was reserved in proportion when the building was sized.
     """
-    h = rng.uniform(*ANT_H)
+    h = ANT_LEN_F * (TOWN_BASE - roof_y) * rng.uniform(*ANT_LEN_JIT)
+    h = min(max(h, ANT_LEN[0]), ANT_LEN[1], roof_y - ceil_y)
+    if h < ANT_MIN_LEN:
+        return None, None
     tip = roof_y - h
     mast = [(cx - MAST_W / 2.0, roof_y + 6.0), (cx - MAST_W / 2.0, tip),
             (cx + MAST_W / 2.0, tip), (cx + MAST_W / 2.0, roof_y + 6.0)]
@@ -765,7 +1005,7 @@ def _antenna(rng, cx, roof_y):
     return [mast], light
 
 
-def _city(lv, detail, rng):
+def _city(lv, detail, rng, ceiling=None):
     """A downtown: one building per block, windows in a grid, a few antennas.
 
     Shares every part with the town - the same window builder at a finer pitch,
@@ -773,6 +1013,19 @@ def _city(lv, detail, rng):
     in density and proportion rather than in kind.
     """
     lv = np.asarray(lv, dtype=np.float64)
+    if CITY_BLOCK_W > 0:
+        # Regroup onto a fixed block width, keeping each group's LOUDEST block -
+        # the same move _houses makes, and for the same reason: the onset
+        # alignment already baked into lv survives the change of resolution, so
+        # a siren still lands on the building that was playing when it happened.
+        n = max(8, int(round((DW + 60.0) / CITY_BLOCK_W)))
+        if len(lv) > n:
+            e = np.linspace(0, len(lv), n + 1).astype(int)
+            lv = np.array([lv[e[i]:max(e[i] + 1, e[i + 1])].max()
+                           for i in range(n)])
+        elif len(lv) < n:
+            lv = np.interp(np.linspace(0, len(lv) - 1, n),
+                           np.arange(len(lv)), lv)
     n = len(lv)
     w = (DW + 60.0) / n
     t = np.clip((lv + 0.45) / 1.40, 0.0, 1.0)        # level to 0..1
@@ -782,16 +1035,53 @@ def _city(lv, detail, rng):
         gap = w * CITY_GAP_F
         a, b = x0 + gap / 2.0, x0 + w - gap / 2.0
         bw = b - a
-        top = TOWN_BASE - (CITY_MIN_H + (CITY_MAX_H - CITY_MIN_H) * float(v))
+        # The block's own column decides how much room it HAS; the recording
+        # decides how much of that room it uses. A quiet block under an empty
+        # span stays quiet - only the top of the range moves.
+        cy = ceil_at(ceiling, (a + b) / 2.0)
+        # ...and the ROOF stops a mast's length short of it. The ceiling bounds
+        # the whole silhouette, antenna included, so a building that grows right
+        # up to it leaves its own mast nowhere to stand - which put the beacons
+        # on the short blocks and took them off the towers, exactly backwards.
+        #
+        # The mast is now a fraction of the building, so the reserve has to be
+        # too, and roof and mast have to be solved together: a taller roof wants
+        # a taller mast, which leaves less room for the roof. Setting the tip at
+        # the ceiling and solving for the roof gives ry below. It comes out as a
+        # SCALE on the whole height range rather than a subtraction from it,
+        # which is what keeps it monotone - the inversion risk last time came
+        # from GATING the reserve on the antenna threshold, not from letting it
+        # vary with height, and a smooth scale reintroduces nothing.
+        fj = ANT_LEN_F * ANT_LEN_JIT[1]
+        ry_min = (cy + fj * TOWN_BASE) / (1.0 + fj)
+        hmax = max(CITY_MIN_H + 1.0, TOWN_BASE - ry_min)
+        top = TOWN_BASE - (CITY_MIN_H + (hmax - CITY_MIN_H) * float(v))
         roof = _roofline(rng, a, b, top)
+        # a setback rises off the roof, so the ceiling has to be checked after
+        # it is built, not before. Drop the whole thing rather than flatten it.
+        over = ry_min - min(y for _, y in roof)
+        if over > 0:
+            roof = [(rx, ry + over) for rx, ry in roof]
+            top += over
         poly = [(a, TOWN_BASE)] + roof + [(b, TOWN_BASE)]
+        # The shadow face, on the tall blocks only, and snapped to a window
+        # column edge. A plain fraction of the width put the division through
+        # the middle of a column - and at the default tower count it landed
+        # 8.4u into a 30u block, narrower than one 13u bay, so the grid drawn
+        # over it hid the facet entirely and the row read as flat rectangles.
+        # On the column edge it falls BETWEEN two grids instead, which on a
+        # two-column block is the middle: a corner-on building, the same read
+        # the mountains get from their crease.
+        cols = max(1, int(round(bw / CITY_BAY_W)))
+        nb = min(max(1, int(round(CITY_SIDE_F * cols))), max(1, cols - 1))
         out.append({
             "poly": poly, "tower": True, "cx": (a + b) / 2.0, "t": float(v),
             "panes": _tower_windows(rng, a, b, TOWN_BASE, top,
                                     bay_w=CITY_BAY_W, row_h=CITY_ROW_H,
                                     occupied_p=CITY_OCCUPIED_P,
                                     lit_p=CITY_LIT_P, ww_f=0.55, wh_f=0.50),
-            "shade": _clip_left(poly, a + bw * CITY_SIDE_F, TOWN_BASE),
+            "shade": (_clip_left(poly, a + nb * (bw / cols), TOWN_BASE)
+                      if float(v) >= CITY_SHADE_T else None),
             "roof": roof,
         })
 
@@ -816,7 +1106,11 @@ def _city(lv, detail, rng):
         ry = min(y for _, y in h["roof"])
         span = [p for p in h["roof"] if p[1] == ry]
         cx = (span[0][0] + span[-1][0]) / 2.0 if len(span) > 1 else h["cx"]
-        polys, light = _antenna(rng, cx, ry)
+        polys, light = _antenna(rng, cx, ry,
+                                ceil_at(ceiling, cx) if ceiling is not None
+                                else ANT_CEIL)
+        if polys is None:                            # no headroom under the slate
+            continue
         h["antenna"] = polys
         h["light"] = light
         lights.append({"rect": light, "cx": cx,
@@ -824,6 +1118,76 @@ def _city(lv, detail, rng):
                        "phase": float(rng.uniform(0.0, 6.0))})
     lights.sort(key=lambda L: L["cx"])
     return out, lights
+
+
+def _fore(detail, rng):
+    """The city's near layer: the same buildings, closer - shorter, wider,
+    varied, and overlapping each other.
+
+    Returned as one list in draw order. Nothing here consults the envelope; the
+    whole point of the layer is a fixed near edge for the skyline to move
+    behind.
+
+    Everything here carries a shaded side, light from the right as everywhere
+    else - but at a much shorter step than the skyline's, and the reason is the
+    ladder rather than the drawing: the near layer's DARKEST tone still has to
+    sit nearer than the skyline's lightest, or the two layers interleave and
+    stop being two layers.
+    """
+    # Widths first, because the heights are a PROFILE across the whole band
+    # rather than a draw per building - and the profile needs to know how many
+    # buildings there are. detail counts features, so it narrows them rather
+    # than shrinking them, the same way more houses are narrower houses.
+    span = []
+    x = -60.0
+    while x < DW + 40.0:
+        w = rng.uniform(*FORE_W) / detail
+        span.append((x, x + w))
+        x += w * rng.uniform(*FORE_STEP)
+    n = len(span)
+
+    # Three components. The smoothed run gives the band districts - a taller
+    # stretch, then a lower one - where independent draws alone give a comb;
+    # the per-building draw breaks the districts up; and the notches cut holes
+    # right through, which is what stops a continuous band reading as a bar.
+    slow = smooth(rng.uniform(0.0, 1.0, n), max(1.0, n / 8.0), passes=1)
+    lo, hi = float(slow.min()), float(slow.max())
+    slow = (slow - lo) / (hi - lo) if hi - lo > 1e-9 else np.full(n, 0.5)
+    fast = rng.uniform(0.0, 1.0, n)
+    mix = FORE_SLOW_F * slow + (1.0 - FORE_SLOW_F) * fast
+    hgt = FORE_H[0] + mix * (FORE_H[1] - FORE_H[0])
+    notch = rng.random(n) < FORE_NOTCH_P
+    hgt = np.where(notch, rng.uniform(*FORE_NOTCH_H, n), hgt)
+
+    out = []
+    for (a, b), h in zip(span, hgt):
+        w, h = b - a, float(h)
+        top = FORE_BASE - h
+        roof = _roofline(rng, a, b, top)
+        poly = [(a, FORE_BASE)] + roof + [(b, FORE_BASE)]
+        out.append({"poly": poly, "cx": (a + b) / 2.0, "h": h,
+                    "shade": _clip_left(poly, a + w * FORE_SIDE_F, FORE_BASE),
+                    "panes": _tower_windows(rng, a, b, FORE_BASE, top,
+                                            bay_w=FORE_BAY_W, row_h=FORE_ROW_H,
+                                            occupied_p=FORE_OCCUPIED_P,
+                                            lit_p=FORE_LIT_P,
+                                            ww_f=0.55, wh_f=0.50)})
+    # tallest first, so the shorter ones in front paint over them - the same
+    # order the mountains are built in, and for the same reason: which shape
+    # occludes which is the whole of what makes a flat row read as depth
+    out.sort(key=lambda f: -f["h"])
+    # street trees last of all, since they are the nearest thing in the frame.
+    # Deciduous only - a town mixes evergreens in, a downtown street does not
+    for f in list(out):
+        if rng.random() < FORE_TREE_P:
+            tx = f["cx"] + rng.uniform(-0.60, 0.60) * FORE_W[0]
+            poly = _decid_poly(rng, tx, FORE_BASE,
+                               FORE_TREE_H * rng.uniform(0.74, 1.26))
+            xs = [p[0] for p in poly]
+            out.append({"poly": poly, "cx": tx, "h": 0.0, "tree": True,
+                        "shade": _clip_poly_left(
+                            poly, min(xs) + (max(xs) - min(xs)) * FORE_TREE_SIDE_F)})
+    return out
 
 
 # ----------------------------------------------------------------- entry
@@ -860,7 +1224,7 @@ def check(scene, style, rows=1, filled=False, progress=0.0):
 
 
 def build(style, db, lv, detail="Default", scale="Skyline (rank)",
-          dynamics="More"):
+          dynamics="More", ceiling=None):
     """All the geometry one render needs, in design units."""
     f = resolve_detail(detail)
     seed = seed_from(db)
@@ -870,7 +1234,7 @@ def build(style, db, lv, detail="Default", scale="Skyline (rank)",
           # strokes to it without importing this module's layout constants
           "mtn_base": MTN_BASE,
           "mountains": [], "trees": [], "houses": [], "town_trees": [],
-          "lights": []}
+          "fore": [], "lights": []}
     if style in ("mountains", "mountains_forest"):
         sc["mountains"] = _mountains(db, f, scale, dynamics, rng)
     if style in ("forest", "mountains_forest"):
@@ -881,5 +1245,8 @@ def build(style, db, lv, detail="Default", scale="Skyline (rank)",
     if style == "city":
         # the same list the houses use: a city block and a house get the same
         # body, shade and pane treatment, so they are one thing to draw
-        sc["houses"], sc["lights"] = _city(lv, f, rng)
+        sc["houses"], sc["lights"] = _city(lv, f, rng, ceiling)
+        # ...and the near layer after it, so the skyline's own draws land
+        # exactly where they landed before there was a foreground at all
+        sc["fore"] = _fore(f, rng)
     return sc

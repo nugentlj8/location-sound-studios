@@ -273,6 +273,46 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
     return D.finish(img, W, H, out)
 
 
+def slate_boxes(cfg):
+    """Every run of slate text as (x0, x1, ink_bottom), in design units.
+
+    Measured with the real font at the real sizes rather than estimated from a
+    character count, because that is the whole point: "PHOENIX" and "SOUTH
+    MOUNTAIN PARK" leave wildly different amounts of the frame free, and so do
+    a two-word conditions line and a six-word one.
+
+    The slate is drawn in caps throughout, so a baseline IS the ink bottom -
+    there is nothing below it to allow for. Positions mirror compose() exactly,
+    at k=1; if the layout there moves, this has to move with it.
+    """
+    M = 84.0
+    out = []
+    n = format_number(cfg.get("number", ""), cfg.get("number_style", "No."))
+    nw = D.text_width(n, 27.0, 11.0, FONT) if n else 0.0
+    # the same shrink-to-fit compose() applies, or a long series name would
+    # reserve more width here than it actually occupies
+    avail = 1280.0 - 2 * M - nw - (40.0 if n else 0.0)
+    ssize, strack = 27.0, 11.0
+    for _ in range(24):
+        if D.text_width(cfg["series"], ssize, strack, FONT) <= avail:
+            break
+        ssize *= 0.94
+        strack *= 0.94
+    out.append((M, M + D.text_width(cfg["series"], ssize, strack, FONT), 150.0))
+    if n:
+        out.append((1280.0 - M - nw, 1280.0 - M, 150.0))
+    out.append((M, M + D.text_width(cfg["place"], 104.0, 7.0, FONT), 296.0))
+    cc = f'{cfg["city"]}  ·  {cfg["conditions"]}'
+    out.append((M, M + D.text_width(cc, 31.0, 8.0, FONT), 360.0))
+    # The clock. Reserved whatever this render is: the thumbnail draws it and
+    # the video has ffmpeg draw it in the same place, so the column is spoken
+    # for either way. Measured off a full-width sample rather than this
+    # render's start time, because the video's clock runs all night.
+    tw = D.text_width("00:00 PM", 31.0, 0.0, FONT)
+    out.append((1280.0 - M - tw, 1280.0 - M, 360.0))
+    return out
+
+
 def ff_escape(t):
     """Escape text for use inside an ffmpeg filter argument."""
     return (t.replace("\\", "\\\\").replace(":", "\\:")
@@ -583,6 +623,7 @@ def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None):
             "tree_ahead": cfg.get("tree_ahead") or scene_mod.TREE_AHEAD[0],
             "mountain_face": cfg.get("mountain_face") or scene_mod.MOUNTAIN_FACE[0],
             "antennas": len((cfg.get("_scene") or {}).get("lights") or []),
+            "foreground_shapes": len((cfg.get("_scene") or {}).get("fore") or []),
             "blink": not cfg.get("no_blink", False),
             "towers": cfg.get("towers", "Default"),
             "tower_count": n,
@@ -664,15 +705,25 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     if style in scene_mod.SILHOUETTE:
         # built once, in design units, and reused by the thumbnail and both
         # video layers - so all three are one shape at three sizes
+        # How high the silhouette may rise, column by column, from where this
+        # render's own slate text actually ends. Only the city reads it - the
+        # nature styles carry their own summit caps - so it is not measured for
+        # anything else, which also keeps them clear of the font metrics.
+        ceiling = (scene_mod.ceiling_profile(slate_boxes(cfg))
+                   if style == "city" and cfg.get("ceiling_profile", True)
+                   else None)
         cfg["_scene"] = scene_mod.build(style, db, lv,
                                         detail=cfg.get("detail", "Default"),
-                                        scale=scale, dynamics=dyn)
+                                        scale=scale, dynamics=dyn,
+                                        ceiling=ceiling)
         s = cfg["_scene"]
+        fore = s.get("fore") or []
         progress(f"Style {style}: {len(s['mountains'])} summits, "
                  f"{len(s['trees']) + len(s['town_trees'])} trees, "
                  f"{len(s['houses'])} buildings, "
-                 f"{sum(len(h.get('panes', [])) for h in s['houses'])} windows, "
-                 f"{len(s['lights'])} antennas "
+                 f"{sum(len(h.get('panes', [])) for h in s['houses'] + fore)} windows, "
+                 f"{len(s['lights'])} antennas, "
+                 f"{len(fore)} in front "
                  f"(seed {s['seed']:016x})")
 
     tw = int(cfg.get("thumb_width", 1920))
@@ -820,8 +871,11 @@ def main():
                    help="no effect on --scale 'Fixed loudness'")
     g.add_argument("--towers", default="Default",
                    choices=list(TOWERS) + ["Auto"],
-                   help="tower width, for --style blocks: Thick, Default, "
-                        "Thin, Fine, or Auto")
+                   help="tower width for --style blocks: Thick, Default, "
+                        "Thin, Fine, or Auto. --style city sets its own block "
+                        "width and always draws 27 of them, so there this only "
+                        "changes how finely the recording is sampled before "
+                        "each block takes its loudest moment")
     g.add_argument("--rows", type=int, default=1, choices=[1, 2, 3, 4, 5],
                    help="stacked envelope rows. Not available for the "
                         "generative silhouette styles")

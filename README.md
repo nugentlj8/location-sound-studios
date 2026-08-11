@@ -58,8 +58,8 @@ different silhouettes. To put your own series on a particular one, add `"style":
 
 - **`blocks`** — the skyline of rectangular towers, one per block of the recording. The plain
   envelope skyline, and the only town style that stacks under `--rows`.
-- **`city`** — the same skyline built as actual buildings: window grids, antennas, and depth
-  shading. What `blocks` looks like up close.
+- **`city`** — the same skyline built as actual buildings: window grids, antennas, a near layer of
+  low buildings across the bottom, and depth shading. What `blocks` looks like up close.
 - **`houses`** — a low residential row with varied rooflines, windows, doors and street trees. Only
   the loudest few percent of the recording earns a taller block, so the skyline stays a town rather
   than a city.
@@ -116,8 +116,166 @@ pane minimums, with the numbers a downtown wants rather than a street:
 
 Every block is a building with a floor under its height, where the plain `blocks` line is allowed
 to touch its own baseline. Roofs step in about two times in five, and the tallest buildings carry
-**antennas** — a plain needle whose tip is the light, capped at 14 so a `--towers Fine` skyline
-doesn't turn into a comb.
+**antennas** — a plain needle whose tip is the light, capped at 14 so a skyline doesn't turn into a
+comb.
+
+**`city` sets its own block width** — 27 blocks across the frame, about 45 design units each,
+whatever `--towers` says. The far layer needs a grain of its own: at the near layer's 30–45u the two
+read as one layer however they are toned, and width is what fixed that, not tone. So for this style
+`--towers` no longer sets how many blocks there are; it changes only how finely the recording is
+sampled before each block takes its loudest moment.
+
+| `--towers` | envelope blocks | city blocks | block width |
+|---|---|---|---|
+| Thick | 28 | 27 | 44.7u |
+| Default | 40 | 27 | 44.7u |
+| Thin | 64 | 27 | 44.7u |
+| Fine | 90 | 27 | 44.7u |
+| Auto | 34–72 | 27 | 44.7u |
+
+It is a fixed width rather than a floor on `--towers`, which was tried first and cannot work: `Thick`
+is the widest preset there is and still only gives a 47.9u slot, so a 50u floor binds on every preset
+including that one and they all collapse to the same count anyway. `blocks` and `houses` are
+unaffected — `--towers` means exactly what it always did for them.
+
+#### Depth
+
+A city gets its depth the same way `mountains_forest` does — a near layer at full strength in front
+of a far one mixed toward the sky — because a single row of buildings standing on a single baseline
+has no way to say the towers are far away.
+
+- **A near layer** — *the same downtown, closer.* Not a second, smaller settlement in front of it:
+  the near buildings use the city's own roofline and the city's own window grid, so what separates
+  near from far is size, overlap and strength, never the vocabulary. Reach for the town's pitched
+  roofs here and the band reads as a village that a city happens to stand behind.
+- It stands about 20 units below the skyline's baseline, so the frame has two ground lines a short
+  step apart. Its tallest buildings do rise a little past the *shortest* towers, so a block in the
+  quietest 4% of the height range can be hidden behind it — which is the price of keeping the tower
+  floor low, and the height range is what the render is for. Narrow buildings and deep notches keep
+  the band's average top far lower than raising that floor ever did.
+- It **carries no audio at all.** Exactly like the treeline in `mountains_forest`, its heights,
+  widths and spacing come from the recording's seed and nothing else, so a quiet recording gets the
+  same foreground as a loud one and only the skyline behind it breathes.
+- **It is one continuous band** — neighbours touch or overlap by up to 20%, never leaving sky between
+  them, which is what makes it read as a single nearer plane instead of a row of shapes each
+  competing with the skyline behind it. Widths run 30–45u, about a tower's own width.
+- **The top edge varies hard**, with deep notches cut right down to 14u about one block in five. Once
+  the buildings are narrow and touching, an evenly varied top edge stops reading as buildings and
+  becomes a bar across the bottom of the frame. Heights are a profile rather than a draw per
+  building: a smoothed run gives the band districts, a per-building draw breaks those up, and the
+  notches cut through both.
+- Overlap is capped at 20% for the notches' sake. The silhouette at any x is the *max* over
+  everything covering it, so heavy overlap is an upper envelope — a smoother — and it eats exactly
+  the notches this layer needs. Tallest are built first so the shorter ones in front paint over them,
+  the same order the mountains are built in.
+- **Bigger windows, fewer of them** — a 1.6× coarser grid than the towers. A nearer building's
+  windows *are* larger, and pitch turns out to do more work than tone: at the skyline's own spacing
+  the near layer carried identical texture, and two layers with one texture are one layer however
+  their tones are set.
+- **More lit than the skyline, not less** — 92% of near buildings occupied and 60% of their panes
+  lit, so about 55% burn against the towers' 48%. Held low at first on the theory that a quiet near
+  layer would keep the skyline dominant, which was wrong twice over: one window in twelve read as an
+  abandoned block rather than a restrained one, and the nearer thing is the one you can see into. The
+  skyline stays dominant on size and position, which is where dominance actually comes from.
+- The odd **deciduous street tree**, kept sparse — with the buildings overlapping there are no gaps
+  to sit in, so trees simply stand in front, and enough of them at one height stops reading as
+  street trees and starts reading as a hedge across the frame.
+- Each near shape cuts a **gap of sky** around itself before it fills, the same trick a street tree
+  uses in a town, because the skyline behind it is the same colour only weaker. The gap belongs to
+  the *band*, not to each building in it: every stroke goes down first and the fills then paint out
+  the shared edges, so only the outside keeps its cut. Where one near building meets another there is
+  a **corner seam** instead — a thin line in a tone, never in sky, which would put the gap back.
+- **A shaded side on the near buildings, and on the tree crowns too**, light from the right as
+  everywhere else — and this is the *stronger* of the two facets in the frame.
+- **The taller blocks carry a lit and a shadow face**, light from the right as everywhere else. The
+  division is snapped to a window-column edge, so the facet falls *between* two grids rather than
+  slicing one; at this block width it lands on the middle and the building reads corner-on. Short
+  blocks are left flat — a roofline already reads them, and faceting the whole row turns the skyline
+  back into texture.
+
+So a city frame has four rungs on the same ladder the mountains use, measured as distance from the
+sky: **near layer 0.00, its shaded side 0.27, the skyline's lit face 0.30, its shadow face 0.54.**
+
+The **facets run the other way from the ladder**, and that is the point. Distance costs internal
+contrast before it costs anything else — a far building's own faces converge toward each other long
+before the building stops reading — so the layer that should look crisply divided is the near one.
+The near split is 0.27 against the skyline's 0.24, and in perceived lightness the near facet is the
+stronger one on all eight presets in both playback states, by 1.05× to 1.22×.
+
+It was built the opposite way round first, with a 0.32 split on the towers against 0.26 up front, and
+the near layer kept reading flat no matter how hard its own shade was pushed: it was being asked to
+out-contrast a far layer that had no business being that defined. Softening the towers got there
+without spending contrast the tight palettes do not have.
+
+The one rule the near shade must keep is **ordering** — it has to stay below the skyline's lit face,
+so the near layer's darkest tone still reads as nearer than the skyline's lightest and the two
+ladders do not interleave. The 0.03 between them is nominal; at that distance they are the same tone
+on any palette, and it is the sky gap that actually parts the layers. What the margin buys is only
+that the near shade never crosses *below* the skyline, which would read as the front of the frame
+lying behind the back of it.
+
+The skyline was softened by moving its **shadow face only**, 0.62 → 0.54. Moving the lit face too
+took the whole layer a step further toward the sky, and since the mix runs toward the background that
+reads as the towers going darker on a dark palette — a change to the picture's weight, when all that
+was wanted was a change to the split. The lit face is the layer's depth; the distance to the shadow
+face is its facet. Separate decisions.
+
+0.54 is also the floor on how soft the towers can go, and that part is measured rather than judged.
+A lit window is drawn at full strength over whichever face it lands on, and on all eight presets the
+accent's luminance sits *between* the silhouette colour and the sky — so as a face is mixed toward
+the sky its luminance sweeps down and, somewhere in that sweep, crosses the lit colour and erases the
+window. That crossing sits around 0.46. Dropping the shadow face to 0.42 would land on it; 0.54 stays
+clear on the far side.
+
+> **Known defect — a lit window on a lit face, ahead of the playhead.** On four presets it is very
+> nearly invisible until the playhead reaches it: Alpine 1.05, Mist 1.11, Aurora 1.16, Canopy 1.17.
+> No choice of face depth rescues those, because the crossing above sits at a different depth in
+> every palette and whatever single depth is chosen, one of them is standing on it — measured across
+> 0.22–0.42 the worst case never rises above 1.05. The fix is in the **colour a lit pane is drawn
+> in**, not the depth ladder: it has to move when its own face crowds it. Deliberately left for its
+> own pass, because `_pane()` is shared with `houses` and changing the rule moves that style too.
+> Behind the playhead the pair inverts and the same presets measure 2.1 to 3.8, so a finished
+> thumbnail — fully played by default — never shows it. See the note on `_pane()` in `lss_draw.py`.
+
+**Overlapping happens in the near layer only, never in the skyline.** Up there the x axis is time: a
+building's centre picks its colour under a `cycle` and sets the second its beacon changes over, so
+sliding one tower's mass into its neighbour's slot would move a loud moment and make the playhead
+appear to re-cross a building it had already passed. Nothing in the near layer answers to the
+recording, which is exactly what makes overlap free down there — and it is the cheapest depth in the
+frame, since one building plainly in front of another says "near" with no tone at all. It is also
+what lets the band stay low enough to keep the towers the subject.
+
+#### How high the towers may go
+
+The ceiling is **a profile across the frame, not a single line.** The slate is not a solid bar — it
+is text down the left, a clock on the right and a wide hole in between — so a single ceiling made
+every column pay the worst column's price. The free spans are measured from the **real text extents
+at render time**, with the actual font at the actual sizes, because that is the whole point:
+`PHOENIX` and `SOUTH MOUNTAIN PARK` leave very different amounts of the frame open, and so do a
+two-word conditions line and a six-word one.
+
+| slate | columns with room above | extra headroom | tallest tower |
+|---|---|---|---|
+| `PHOENIX` / `AZ · CLEAR` | 66% of frame | up to 87u | +31% |
+| `SOUTH MOUNTAIN PARK` / `PHOENIX AZ · LIGHT WIND CICADAS` | 33% | up to 77u | +27% |
+
+29 units of air are kept around every text box, and the profile is smoothed so the ceiling ramps
+rather than steps — a cliff in the skyline that no loud moment put there would read as data. The
+smoothing may only ever push the ceiling *down* toward text, never up into it.
+
+**Height still comes entirely from the envelope.** A column's ceiling sets how much room a block
+*has*; the recording decides how much of it the block uses, so a quiet block under an empty span
+stays quiet. The honest cost is that the same loudness gives a different height depending on where it
+lands — a tower under the place name can't be compared against one in the clear. That is a deliberate
+trade: a tower that can break up and away from the rest is worth more than strict comparability.
+
+Masts are **proportional to their own building**, about 16% of its height, so the tallest tower in
+frame carries the longest antenna. Drawing an absolute length and then trimming it to leftover
+headroom did the exact opposite — the tallest tower sat closest to the ceiling, so it had the least
+room and wore the shortest stub. The room is therefore reserved in proportion when the building is
+sized, which comes out as a *scale* on the whole height range rather than a subtraction from it, and
+that is what keeps it monotone: gate a reserve on the antenna threshold instead and a block just over
+it comes out shorter than one just under.
 
 The needle is a rectangle, never a stroke: it stands against open sky, so it already carries the
 same contrast every roofline has, and being axis-aligned it downsamples without the fringing a
@@ -132,6 +290,9 @@ the other one carries the tip; the worst case across all eight presets is 4.56.
 In the video the beacons blink, each on its own slow cycle — about 2 seconds lit out of every 3 to
 4.6, so 13–20 flashes a minute with the skyline mostly lit and winking rather than mostly dark and
 flashing. Phases come from the recording's seed like everything else.
+
+A typical frame carries 7 or 8 of them. Each gets its own period and phase from the seed, and the
+periods are all distinct, so the skyline never goes dark all at once however long it runs.
 
 This runs on the same ffmpeg timeline mechanism the live clock already uses, so it costs the encode
 essentially nothing — measured at 2560×1440, a full skyline of beacons is inside the noise of the
@@ -169,7 +330,8 @@ To put your own series in a scene, add `"scene": "nature"` or `"scene": "town"` 
 ### Detail
 
 **Silhouette detail** (`--detail Coarse | Default | Fine`, or a number like `1.2`) sets how much
-shape those styles carry — how many summits, how many trees, how many houses. It counts features,
+shape those styles carry — how many summits, how many trees, how many houses, how many buildings in
+a city's near layer. It counts features,
 not pixels, so a thumbnail and the full video of the same recording read identically; only the
 resolution differs. Tower width stays the control for `blocks`.
 
@@ -352,6 +514,27 @@ folder is never overwritten — a repeat render becomes `..._2`.
 
 `py lss_studio\lss_render.py --help` lists every flag, grouped as **slate**, **look**, **shape**
 and **output** — the same four groups the window uses.
+
+### What changed in 1.7.0
+
+`--style city` is substantially redrawn. No defaults moved for any other style and no flag changed
+its name, but one flag changed what it reaches:
+
+| | Was | Now |
+|---|---|---|
+| `--towers` for `--style city` | set the block count | **no longer sets it** — city is always 27 blocks at ~45u; the flag now only changes how finely the recording is sampled before each block takes its loudest moment |
+
+`--towers` is unchanged for `blocks` and `houses`.
+
+What the style gained: a near layer of the same buildings seen closer — narrower, touching, deeply
+notched, more brightly lit than the towers; a per-column ceiling measured from the slate's own text
+so the skyline rises higher where nothing is above it; masts proportional to their own building; and
+a depth ladder whose facets run near-strong, far-soft. See [Depth](#depth) and
+[How high the towers may go](#how-high-the-towers-may-go).
+
+Every other silhouette is untouched — `blocks`, `houses`, `topo`, `mountains`, `forest` and
+`mountains_forest` all render byte-for-byte what they rendered in 1.6.2, verified by SHA against a
+worktree of the shipped version across both playback states and both fill modes.
 
 ### What changed in 1.6.0
 
