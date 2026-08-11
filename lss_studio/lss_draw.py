@@ -287,13 +287,18 @@ def _pane(dr, p, k, c, bg, lit, filled):
 
 
 def draw_scene(dr, sc, W, H, col, bg, played=False, face="outline",
-               ahead="outline", filled=False, bands=None, lit=None):
+               ahead="outline", filled=False, bands=None, lit=None,
+               lights_on=True):
     """One generative silhouette, back to front.
 
     `col` is the state colour: the foreground ahead of the playhead, the accent
     behind it. `lit` is the other one of that pair, used only by lit windows.
     The two layers are otherwise identical, so the sliding mask in the video
     turns one into the other exactly where the playhead is.
+
+    `lights_on` draws the antenna beacons. A still wants them lit; the video
+    layers bake them dark and let ffmpeg blink them, which is the only part of
+    this drawing that is not the same in every frame.
 
     Shapes are filled with the SKY before they are stroked. That is what gives
     a nearer shape occlusion over a further one without a vector clipper, and
@@ -334,7 +339,13 @@ def draw_scene(dr, sc, W, H, col, bg, played=False, face="outline",
     for h in sc.get("houses", []):
         c = _band_col(bands, h["cx"], k, col)
         body = mix(c, bg, _depth(HOUSE_FACE, c, bg))
-        # chimney first, house over it: the stack runs down to the ground so it
+        # An antenna is too slender to outline - a 4-unit stroke around a
+        # 3-unit mast is just a thicker mast - so it is always solid, in the
+        # body tone when there is one and in the line colour when there is not.
+        # It goes down first; the building drawn over it hides the join.
+        for poly in h.get("antenna", []):
+            dr.polygon(_pts(poly, k), fill=body if filled else rgb(c))
+        # chimney next, house over it: the stack runs down to the ground so it
         # is never left hanging, and the body then hides everything below the
         # roof it pokes through
         for poly in ([h["chimney"]] if h.get("chimney") else []) + [h["poly"]]:
@@ -354,6 +365,11 @@ def draw_scene(dr, sc, W, H, col, bg, played=False, face="outline",
                 _stroke(dr, h["shade"][-2:], k, c, LW_CORNER)
         for p in h.get("panes", []):
             _pane(dr, p, k, c, bg, lit, filled)
+        # the beacon, on the same rule as a lit window. The video bakes it off
+        # and blinks it back on with a pair of drawbox filters, so its position
+        # has to be exactly this one - see lss_render.blink_layers()
+        if lights_on and h.get("light"):
+            _pane(dr, {"rect": h["light"], "lit": True}, k, c, bg, lit, filled)
 
     for t in sc.get("town_trees", []):
         c = _band_col(bands, t["cx"], k, col)

@@ -187,9 +187,15 @@ class App:
         self.face = self._combo(look, lr, "Mountain faces",
                                 lss_scene.MOUNTAIN_FACE, lss_scene.MOUNTAIN_FACE[0])
         lr += 1
-        ttk.Label(look, text="Both grey out for a silhouette that has no "
-                             "trees or no mountains.",
+        ttk.Label(look, text="These grey out for a silhouette that has no "
+                             "trees, mountains or antennas.",
                   foreground=MUTED).grid(row=lr, column=1, sticky="w", pady=(0, 8))
+        lr += 1
+        self.blink = tk.BooleanVar(value=True)
+        self.blinkbox = ttk.Checkbutton(
+            look, text="Blink the antenna beacons — video only, a thumbnail "
+                       "always shows them lit", variable=self.blink)
+        self.blinkbox.grid(row=lr, column=1, sticky="w", pady=4)
         lr += 1
         self.filled = tk.BooleanVar(value=False)
         ttk.Checkbutton(look, text="Solid silhouette instead of outlines",
@@ -377,6 +383,8 @@ class App:
         for w, styles in ((self.ahead, lss_scene.TREE_AHEAD_STYLES),
                           (self.face, lss_scene.MOUNTAIN_FACE_STYLES)):
             w.config(state="readonly" if s in styles else "disabled")
+        self.blinkbox.config(
+            state="normal" if s in lss_scene.BLINK_STYLES else "disabled")
 
     # ---------- widget helpers ----------
     def _entry(self, f, r, label, default=""):
@@ -653,6 +661,7 @@ class App:
             "scene": scene, "style": self.style.get(),
             "detail": self.detail.get(),
             "tree_ahead": self.ahead.get(), "mountain_face": self.face.get(),
+            "no_blink": not bool(self.blink.get()),
             "progress": frac,
             "cycle": cyc, "cycle_minutes": cmin,
             "towers": self.towers.get(), "dynamics": self.dyn.get(),

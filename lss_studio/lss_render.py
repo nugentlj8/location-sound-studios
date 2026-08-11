@@ -201,7 +201,8 @@ def to_levels(db, n, scale="Skyline (rank)", dynamics="More", align=True,
 
 # ----------------------------------------------------------------- drawing
 # ----------------------------------------------------------------- outputs
-def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False):
+def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
+            lights_on=True):
     """The single composition used for both the thumbnail and the video frames.
 
     Laid out in 1280x720 design units and scaled by k, so the video is the
@@ -232,7 +233,7 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False):
                      # a lit window is drawn in whichever of the pair this
                      # layer is not, so it still reads once the playhead has
                      # painted the body in the other one
-                     lit=fg if played else acc)
+                     lit=fg if played else acc, lights_on=lights_on)
     else:
         lay = D.row_layout(H, nrows, filled, top=0.66, bot=0.95)
         cols = [line_col if line_col != "__cycle__" else cfg["accent"]] * nrows
@@ -430,16 +431,60 @@ def make_bands(cfg, W, dur):
 
 
 def video_layers(cfg, lv, W, H, d, dur=0):
-    """bone and clay full frames plus the sliding mask."""
+    """bone and clay full frames plus the sliding mask.
+
+    Beacons are baked DARK when they are going to blink, and drawn back on by
+    blink_layers() - so the lit state only ever gets added. Erasing a baked-in
+    light would have to repaint it in the body colour, which differs either
+    side of the playhead and under a colour cycle varies along the frame too.
+
+    With blinking off they are baked LIT instead, and then the sliding mask
+    flips them from accent to foreground for free, exactly as it does a window.
+    """
     paths = {}
     bands = make_bands(cfg, W, dur)
     cfg = dict(cfg, _bands=bands)
     fg = cfg.get("foreground") or BONE
+    steady = bool(cfg.get("no_blink"))
     for name, col in (("bone", fg), ("clay", "__cycle__" if bands else cfg["accent"])):
         paths[name] = compose(cfg, lv, W, H, col, os.path.join(d, f"_{name}.png"),
-                              played=(name == "clay"))
+                              played=(name == "clay"), lights_on=steady)
     paths["mhard"] = D.solid_mask(W, H, os.path.join(d, "_mhard.png"))
     return paths
+
+
+def blink_layers(cfg, W, H, dur):
+    """drawbox filters that light the antenna beacons, as a filter string.
+
+    Two per light, not one. A beacon follows the same rule a lit window does -
+    it is drawn in whichever colour the current state is NOT - so it has to be
+    the accent ahead of the playhead and the foreground behind it, or it
+    disappears into the body the moment the playhead arrives. The mask slides
+    at x = W*t/dur, so the beacon at x crosses over at t = dur*x/W.
+
+    This is the same ffmpeg timeline mechanism the clock already uses; the
+    measured cost of a full skyline of them is inside the noise of the encode.
+    """
+    sc = cfg.get("_scene") or {}
+    lights = sc.get("lights") or []
+    if not lights or not dur or cfg.get("no_blink"):
+        return ""
+    k = W / 1280.0
+    fg = cfg.get("foreground") or BONE
+    acc = cfg["accent"]
+    out = []
+    for L in lights:
+        x0, y0, x1, y1 = L["rect"]
+        x, y = int(round(x0 * k)), int(round(y0 * k))
+        w, h = max(1, int(round((x1 - x0) * k))), max(1, int(round((y1 - y0) * k)))
+        cross = dur * (x + w / 2.0) / W
+        on = (f"lt(mod(t+{L['phase']:.3f}\\,{L['period']:.3f})\\,"
+              f"{scene_mod.BLINK_ON:.2f})")
+        for col, side in ((acc, f"lt(t\\,{cross:.3f})"),
+                          (fg, f"gte(t\\,{cross:.3f})")):
+            out.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0x{col[1:]}"
+                       f":t=fill:enable='{on}*{side}'")
+    return "," + ",".join(out)
 
 
 def epoch_for(datestr, timestr):
@@ -460,7 +505,8 @@ def build_video(cfg, paths, audio, dur, W, H, out, fps=10, crf=None,
         f"[1:v][m1]alphamerge[clayA];"
         f"[0:v][clayA]overlay=0:0[s1];"
         f"[s1]drawtext=fontfile='{fp}':fontsize={clock_size}:fontcolor={cfg['accent'][1:]}"
-        f":x=(w-tw-{rm}):y={cy}:text='%{{pts\\:gmtime\\:{ep}\\:%I\\\\\\:%M %p}}'[v]"
+        f":x=(w-tw-{rm}):y={cy}:text='%{{pts\\:gmtime\\:{ep}\\:%I\\\\\\:%M %p}}'"
+        + blink_layers(cfg, W, H, dur) + "[v]"
     )
     cmd = ["ffmpeg", "-y", "-v", "error",
            "-loop", "1", "-framerate", str(fps), "-i", paths["bone"],
@@ -536,6 +582,8 @@ def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None):
             "seed": f"{cfg['_scene']['seed']:016x}" if cfg.get("_scene") else "",
             "tree_ahead": cfg.get("tree_ahead") or scene_mod.TREE_AHEAD[0],
             "mountain_face": cfg.get("mountain_face") or scene_mod.MOUNTAIN_FACE[0],
+            "antennas": len((cfg.get("_scene") or {}).get("lights") or []),
+            "blink": not cfg.get("no_blink", False),
             "towers": cfg.get("towers", "Default"),
             "tower_count": n,
             "geometry": cfg.get("geometry", "steps"),
@@ -622,8 +670,9 @@ def run(cfg, progress=lambda s: None, on_progress=None):
         s = cfg["_scene"]
         progress(f"Style {style}: {len(s['mountains'])} summits, "
                  f"{len(s['trees']) + len(s['town_trees'])} trees, "
-                 f"{len(s['houses'])} houses, "
-                 f"{sum(len(h.get('panes', [])) for h in s['houses'])} windows "
+                 f"{len(s['houses'])} buildings, "
+                 f"{sum(len(h.get('panes', [])) for h in s['houses'])} windows, "
+                 f"{len(s['lights'])} antennas "
                  f"(seed {s['seed']:016x})")
 
     tw = int(cfg.get("thumb_width", 1920))
@@ -736,9 +785,9 @@ def main():
                    help="silhouette shape. nature: "
                         + ", ".join(scene_mod.SCENE_STYLES["nature"])
                         + "; town: " + ", ".join(scene_mod.SCENE_STYLES["town"])
-                        + ". Defaults to the series' own: houses for Sounds in "
-                        "Towns, mountains_forest for Sounds of Nature, blocks "
-                        "elsewhere")
+                        + ". Defaults to the series' own: city for Sounds of the "
+                        "City, houses for Sounds in Towns, mountains_forest "
+                        "for Sounds of Nature, blocks elsewhere")
     g.add_argument("--detail", default="Default",
                    help="how much shape the silhouette styles carry: "
                         + ", ".join(scene_mod.DETAIL) + ", or a number like "
@@ -755,6 +804,10 @@ def main():
                         "faces, kept washed toward the sky so the trees stay "
                         "the thing that reads as progress (--style "
                         + ", ".join(sorted(scene_mod.MOUNTAIN_FACE_STYLES)) + " only)")
+    g.add_argument("--no-blink", action="store_true",
+                   help="leave the antenna beacons steady instead of blinking "
+                        "them (--style city only). Video only - a thumbnail "
+                        "always shows them lit")
     g.add_argument("--filled", action="store_true",
                    help="solid silhouette instead of outlines")
     g.add_argument("--slate-mono", action="store_true",

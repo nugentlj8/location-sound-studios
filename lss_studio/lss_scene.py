@@ -23,10 +23,15 @@ SKYGAMMA = {"Natural": 1.2, "More": 1.6, "Most": 2.2}
 # Which silhouettes each scene can wear. The first entry is that scene's
 # default, i.e. the behaviour that predates styles existing at all.
 SCENE_STYLES = {"nature": ["topo", "mountains", "forest", "mountains_forest"],
-                "town": ["blocks", "houses"]}
+                "town": ["blocks", "houses", "city"]}
 DEFAULT_STYLE = {s: v[0] for s, v in SCENE_STYLES.items()}
 # styles drawn by this module. The other two are the original envelope line.
-SILHOUETTE = {"mountains", "forest", "mountains_forest", "houses"}
+#
+# 'city' is a separate style rather than a richer 'blocks' on purpose: blocks
+# is the plain envelope skyline that stacks under --rows, and two series still
+# want exactly that. Giving the detail its own name leaves blocks alone and
+# keeps --rows meaning what it always did.
+SILHOUETTE = {"mountains", "forest", "mountains_forest", "houses", "city"}
 
 # Detail multiplies feature COUNT, never feature size, and is deliberately
 # independent of output width - see the module docstring.
@@ -41,6 +46,7 @@ MOUNTAIN_FACE = ["twotone", "outline"]  # whether the faces carry a flat tone
 # with the houses, not on the forest's schedule, so TREE_AHEAD misses them.
 TREE_AHEAD_STYLES = {"forest", "mountains_forest"}
 MOUNTAIN_FACE_STYLES = {"mountains", "mountains_forest"}
+BLINK_STYLES = {"city"}                 # the only style with beacons to blink
 
 # --- vertical layout, design units -----------------------------------------
 # The slate's "CITY . CONDITIONS" baseline sits at 360, i.e. half the frame, so
@@ -123,6 +129,58 @@ HOUSE_OCCUPIED_P = 0.45          # chance a house is occupied at all
 HOUSE_LIT_P = 0.40               # chance one of ITS panes is lit
 TOWER_OCCUPIED_P = 0.85          # a block of flats nearly always has someone in
 TOWER_LIT_P = 0.30
+
+# --- the city -------------------------------------------------------------
+# Same parts as the town, at a different density. A city block is narrow and
+# tall where a house is wide and low, so the window grid is finer and far more
+# of it is lit - which is the whole difference between a street at night and a
+# downtown at night.
+CITY_MIN_H = 0.075 * DH          # even the quietest block is a BUILDING. The
+CITY_MAX_H = 0.285 * DH          # envelope line is allowed to touch its
+                                 # baseline; a building with windows in it is
+                                 # not, or the street has a hole in it
+CITY_GAP_F = 0.10                # of the slot width, so the blocks read as
+                                 # separate buildings without a gappy skyline
+CITY_SIDE_F = 0.28               # shaded side, as HOUSE_SIDE_F for a house
+CITY_BAY_W, CITY_ROW_H = 13.0, 15.0      # the finer grid
+CITY_OCCUPIED_P = 0.95           # a downtown block is essentially always in use
+CITY_LIT_P = 0.50                # and half of it is lit - "busy" is this number
+CITY_SETBACK_P = 0.42            # chance a roof steps in rather than being flat
+
+# Antennas. Biased to the tall buildings, because that is where they are, and
+# because a mast on a short block just looks like a mistake.
+ANT_MIN_T = 0.45                 # normalised height below which none appear
+ANT_P0, ANT_P1 = 0.15, 0.60      # chance = ANT_P0 + ANT_P1 * normalised height
+ANT_MAX = 14                     # ...but only this many, tallest first, or a
+                                 # --towers Fine skyline turns into a comb
+ANT_H = (28.0, 56.0)             # mast height in design units. Much taller
+                                 # than about twelve times its width and it
+                                 # stops reading as a mast and starts reading
+                                 # as a stray pin
+MAST_W = 4.0                     # a RECTANGLE, never a stroke. It stands
+                                 # against open sky, so it carries the same
+                                 # silhouette-vs-sky contrast every roofline
+                                 # has; being axis-aligned it also downsamples
+                                 # without the fringing a hairline would get
+LIGHT_H = 6.0                    # the lit TIP of the needle, mast-width. No
+                                 # housing: the needle is the whole shape and
+                                 # its top segment is what lights up
+# The tip is bounded by sky above and by the rest of the mast below, which is
+# what keeps it readable everywhere. A lit colour against the SKY is only 1.90
+# on Morning and 1.80 on Evening, and against the BODY only 2.02 on Canopy and
+# 1.65 on Alpine - but the two are complementary, so whichever edge is weak in
+# a palette, the other one carries the tip. Worst case is 4.56, on Morning.
+
+# Blink, for the video only. Slow and out of step with each other; a whole
+# skyline winking together reads as a fault, not as a city.
+BLINK_PERIOD = (3.0, 4.6)        # seconds, per light
+BLINK_ON = 2.0                   # seconds lit out of each period, i.e. lit
+                                 # rather more than half the time. A beacon
+                                 # that is mostly OFF makes the whole skyline
+                                 # go dark whenever the phases happen to line
+                                 # up, which reads as a fault; mostly ON reads
+                                 # as a lit city with a slow wink in it, and
+                                 # keeps the video close to its own thumbnail
 
 
 def seed_from(db):
@@ -538,15 +596,22 @@ def _windows(rng, a, b, base, top, occupied_p, lit_p, door=True):
     return out
 
 
-def _tower_windows(rng, a, b, base, top):
+def _tower_windows(rng, a, b, base, top, bay_w=TOWER_BAY_W, row_h=TOWER_ROW_H,
+                   occupied_p=TOWER_OCCUPIED_P, lit_p=TOWER_LIT_P,
+                   ww_f=0.50, wh_f=0.44):
     """A tall block gets a grid rather than a single storey of openings - which
-    is most of what makes it read as flats instead of an enlarged house."""
+    is most of what makes it read as flats instead of an enlarged house.
+
+    The defaults are the town's. A city block is the same grid at a finer pitch
+    and a much higher occupancy, so it passes its own numbers rather than
+    getting a second copy of this.
+    """
     hw, fh = b - a, base - top
-    cols = max(1, int(round(hw / TOWER_BAY_W)))
-    rows = max(1, int(round(fh / TOWER_ROW_H)))
+    cols = max(1, int(round(hw / bay_w)))
+    rows = max(1, int(round(fh / row_h)))
     bw, bh = hw / cols, fh / rows
-    p = TOWER_LIT_P if rng.random() < TOWER_OCCUPIED_P else 0.0
-    ww, wh = bw * 0.50, bh * 0.44
+    p = lit_p if rng.random() < occupied_p else 0.0
+    ww, wh = bw * ww_f, bh * wh_f
     out = []
     for r in range(rows):
         for c in range(cols):
@@ -653,6 +718,98 @@ def _houses(lv, detail, rng):
     return out, trees
 
 
+# ----------------------------------------------------------------- city
+def _roofline(rng, a, b, top):
+    """A flat roof, or one that steps in once on its way up.
+
+    Returns the points from the left parapet to the right one. x never travels
+    backwards, which is what lets _clip_left cut the result in one crossing.
+    """
+    w = b - a
+    if rng.random() >= CITY_SETBACK_P:
+        return [(a, top), (b, top)]
+    inset = w * rng.uniform(0.16, 0.30)
+    rise = w * rng.uniform(0.18, 0.42)
+    return [(a, top), (a + inset, top), (a + inset, top - rise),
+            (b - inset, top - rise), (b - inset, top), (b, top)]
+
+
+def _antenna(rng, cx, roof_y):
+    """A plain needle, as (polys, light_rect). Its top segment is the light.
+
+    Rectangles throughout - see MAST_W. The mast runs a little way below the
+    roof so the building drawn over it hides the join rather than leaving the
+    pole balanced on the parapet.
+    """
+    h = rng.uniform(*ANT_H)
+    tip = roof_y - h
+    mast = [(cx - MAST_W / 2.0, roof_y + 6.0), (cx - MAST_W / 2.0, tip),
+            (cx + MAST_W / 2.0, tip), (cx + MAST_W / 2.0, roof_y + 6.0)]
+    light = (cx - MAST_W / 2.0, tip, cx + MAST_W / 2.0, tip + LIGHT_H)
+    return [mast], light
+
+
+def _city(lv, detail, rng):
+    """A downtown: one building per block, windows in a grid, a few antennas.
+
+    Shares every part with the town - the same window builder at a finer pitch,
+    the same left-hand shade, the same pane minimums - so the two styles differ
+    in density and proportion rather than in kind.
+    """
+    lv = np.asarray(lv, dtype=np.float64)
+    n = len(lv)
+    w = (DW + 60.0) / n
+    t = np.clip((lv + 0.45) / 1.40, 0.0, 1.0)        # level to 0..1
+    out = []
+    for i, v in enumerate(t):
+        x0 = -30.0 + i * w
+        gap = w * CITY_GAP_F
+        a, b = x0 + gap / 2.0, x0 + w - gap / 2.0
+        bw = b - a
+        top = TOWN_BASE - (CITY_MIN_H + (CITY_MAX_H - CITY_MIN_H) * float(v))
+        roof = _roofline(rng, a, b, top)
+        poly = [(a, TOWN_BASE)] + roof + [(b, TOWN_BASE)]
+        out.append({
+            "poly": poly, "tower": True, "cx": (a + b) / 2.0, "t": float(v),
+            "panes": _tower_windows(rng, a, b, TOWN_BASE, top,
+                                    bay_w=CITY_BAY_W, row_h=CITY_ROW_H,
+                                    occupied_p=CITY_OCCUPIED_P,
+                                    lit_p=CITY_LIT_P, ww_f=0.55, wh_f=0.50),
+            "shade": _clip_left(poly, a + bw * CITY_SIDE_F, TOWN_BASE),
+            "roof": roof,
+        })
+
+    # Antennas, decided for every building so the draw does not depend on the
+    # order they are later capped in, then kept tallest-first.
+    want = []
+    for i, h in enumerate(out):
+        # the row runs off both edges by design, so the outermost buildings are
+        # only part on screen. A mast out there is invisible, and would still
+        # cost the video a pair of blink filters aimed off the frame.
+        on_frame = MAST_W <= h["cx"] <= DW - MAST_W
+        if h["t"] < ANT_MIN_T or not on_frame:
+            rng.random()                             # keep the stream aligned
+            continue
+        if rng.random() < ANT_P0 + ANT_P1 * h["t"]:
+            want.append(i)
+    want.sort(key=lambda i: -out[i]["t"])
+    lights = []
+    for i in want[:ANT_MAX]:
+        h = out[i]
+        # stand it on the highest part of the roof, so a setback carries it
+        ry = min(y for _, y in h["roof"])
+        span = [p for p in h["roof"] if p[1] == ry]
+        cx = (span[0][0] + span[-1][0]) / 2.0 if len(span) > 1 else h["cx"]
+        polys, light = _antenna(rng, cx, ry)
+        h["antenna"] = polys
+        h["light"] = light
+        lights.append({"rect": light, "cx": cx,
+                       "period": float(rng.uniform(*BLINK_PERIOD)),
+                       "phase": float(rng.uniform(0.0, 6.0))})
+    lights.sort(key=lambda L: L["cx"])
+    return out, lights
+
+
 # ----------------------------------------------------------------- entry
 def check(scene, style, rows=1, filled=False, progress=0.0):
     """Reject an impossible combination up front, saying what IS possible.
@@ -693,7 +850,8 @@ def build(style, db, lv, detail="Default", scale="Skyline (rank)",
     seed = seed_from(db)
     rng = np.random.default_rng(seed)
     sc = {"style": style, "seed": seed, "detail": f,
-          "mountains": [], "trees": [], "houses": [], "town_trees": []}
+          "mountains": [], "trees": [], "houses": [], "town_trees": [],
+          "lights": []}
     if style in ("mountains", "mountains_forest"):
         sc["mountains"] = _mountains(db, f, scale, dynamics, rng)
     if style in ("forest", "mountains_forest"):
@@ -701,4 +859,8 @@ def build(style, db, lv, detail="Default", scale="Skyline (rank)",
                              vary=(style == "forest"))
     if style == "houses":
         sc["houses"], sc["town_trees"] = _houses(lv, f, rng)
+    if style == "city":
+        # the same list the houses use: a city block and a house get the same
+        # body, shade and pane treatment, so they are one thing to draw
+        sc["houses"], sc["lights"] = _city(lv, f, rng)
     return sc

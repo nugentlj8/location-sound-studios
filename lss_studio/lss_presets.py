@@ -220,6 +220,7 @@ def series_scene(series_key, presets):
 # one: Towns is houses while City stays on blocks. Shipped in code for the same
 # reason SERIES_SCENE is - an existing lss_presets.json has no key to read.
 SERIES_STYLE = {
+    "Sounds of the City": "city",
     "Sounds in Towns": "houses",
     "Sounds of Nature": "mountains_forest",
 }

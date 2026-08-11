@@ -47,15 +47,19 @@ with the **Silhouette** dropdown, or `--style` from the command line:
 
 | Scene | Series | Styles | Default |
 |---|---|---|---|
-| town | Sounds of the City, in Spaces | `blocks`, `houses` | `blocks` |
-| town | Sounds in Towns | `blocks`, `houses` | `houses` |
+| town | Sounds of the City | `blocks`, `houses`, `city` | `city` |
+| town | Sounds in Spaces | `blocks`, `houses`, `city` | `blocks` |
+| town | Sounds in Towns | `blocks`, `houses`, `city` | `houses` |
 | nature | Sounds of Nature | `topo`, `mountains`, `forest`, `mountains_forest` | `mountains_forest` |
 
-The default is per **series**, not per scene — Towns draws houses while City stays on blocks. To
-put your own series on a particular silhouette, add `"style": "houses"` to it in
+The default is per **series**, not per scene — the three town series share a scene and want three
+different silhouettes. To put your own series on a particular one, add `"style": "houses"` to it in
 `lss_presets.json`.
 
-- **`blocks`** — the skyline of rectangular towers, one per block of the recording.
+- **`blocks`** — the skyline of rectangular towers, one per block of the recording. The plain
+  envelope skyline, and the only town style that stacks under `--rows`.
+- **`city`** — the same skyline built as actual buildings: window grids, antennas, and depth
+  shading. What `blocks` looks like up close.
 - **`houses`** — a low residential row with varied rooflines, windows, doors and street trees. Only
   the loudest few percent of the recording earns a taller block, so the skyline stays a town rather
   than a city.
@@ -98,6 +102,49 @@ shape. The seed is written into the render's `.json` sidecar.
   vertical run reads as a building corner.
 - **Street trees in two shapes**, evergreen and deciduous, mixed. The nature silhouettes stay
   evergreen-only.
+
+### Inside a city
+
+`city` is the town's parts at a city's density — the same window builder, the same shade, the same
+pane minimums, with the numbers a downtown wants rather than a street:
+
+| | `houses` | `city` |
+|---|---|---|
+| window grid | 27u bays, one storey | 13×15u, full height |
+| occupied | 45% of buildings | 95% |
+| lit windows | 40% of an occupied one | 50% |
+
+Every block is a building with a floor under its height, where the plain `blocks` line is allowed
+to touch its own baseline. Roofs step in about two times in five, and the tallest buildings carry
+**antennas** — a plain needle whose tip is the light, capped at 14 so a `--towers Fine` skyline
+doesn't turn into a comb.
+
+The needle is a rectangle, never a stroke: it stands against open sky, so it already carries the
+same contrast every roofline has, and being axis-aligned it downsamples without the fringing a
+hairline would pick up. The lit tip is the top segment of that needle, at the same width — so it is
+bounded by sky above and by the rest of the mast below. That matters because the two contrasts are
+complementary: a lit colour against the **sky** is only 1.90 on Morning and 1.80 on Evening, and
+against the **body** only 2.02 on Canopy and 1.65 on Alpine. Whichever edge a palette makes weak,
+the other one carries the tip; the worst case across all eight presets is 4.56.
+
+### Blinking beacons
+
+In the video the beacons blink, each on its own slow cycle — about 2 seconds lit out of every 3 to
+4.6, so 13–20 flashes a minute with the skyline mostly lit and winking rather than mostly dark and
+flashing. Phases come from the recording's seed like everything else.
+
+This runs on the same ffmpeg timeline mechanism the live clock already uses, so it costs the encode
+essentially nothing — measured at 2560×1440, a full skyline of beacons is inside the noise of the
+encode time and adds 1–3% to the file size. A three-hour render still encodes in about the time it
+always did.
+
+A thumbnail always shows every beacon lit. Turn the blinking off with **Blink the antenna beacons**
+in the window, or `--no-blink`, and they stay steady in the video too.
+
+```
+py lss_studio\lss_render.py recording.flac --style city --thumb-only ...
+py lss_studio\lss_render.py recording.flac --style city --no-blink ...
+```
 
 Where a tree crosses a house, the tree is drawn at full strength with a thin gap of sky around it.
 Without that gap a filled tree and a filled house are the same colour and the tree simply
@@ -297,6 +344,18 @@ folder is never overwritten — a repeat render becomes `..._2`.
 
 `py lss_studio\lss_render.py --help` lists every flag, grouped as **slate**, **look**, **shape**
 and **output** — the same four groups the window uses.
+
+### What changed in 1.6.0
+
+One default moved:
+
+| | Was | Now | Old behaviour |
+|---|---|---|---|
+| Sounds of the City silhouette | `blocks` | `city` | `--style blocks` |
+
+`city` is a **new style** rather than a richer `blocks`, so `blocks` itself is untouched — Sounds in
+Spaces still draws exactly what it drew, `--rows` still stacks, and `--style blocks` renders
+byte-for-byte what it rendered in 1.5.0. Nature and Towns are likewise byte-identical.
 
 ### What changed in 1.5.0
 
