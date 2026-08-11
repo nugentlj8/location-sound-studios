@@ -140,9 +140,11 @@ unaffected — `--towers` means exactly what it always did for them.
 
 #### Depth
 
-A city gets its depth the same way `mountains_forest` does — a near layer at full strength in front
-of a far one mixed toward the sky — because a single row of buildings standing on a single baseline
-has no way to say the towers are far away.
+A city gets its depth from a near layer standing in front of the skyline, because a single row of
+buildings on a single baseline has no way to say the towers are far away. Unlike `mountains_forest`,
+which separates its two layers by tone, a city separates its two by **position and a cut of sky** —
+both layers are drawn in the same two tones, because they are the same buildings at different
+distances.
 
 - **A near layer** — *the same downtown, closer.* Not a second, smaller settlement in front of it:
   the near buildings use the city's own roofline and the city's own window grid, so what separates
@@ -186,33 +188,32 @@ has no way to say the towers are far away.
   the shared edges, so only the outside keeps its cut. Where one near building meets another there is
   a **corner seam** instead — a thin line in a tone, never in sky, which would put the gap back.
 - **A shaded side on the near buildings, and on the tree crowns too**, light from the right as
-  everywhere else — and this is the *stronger* of the two facets in the frame.
+  everywhere else, and in the skyline's own shadow tone — the same facet the towers have.
 - **The taller blocks carry a lit and a shadow face**, light from the right as everywhere else. The
   division is snapped to a window-column edge, so the facet falls *between* two grids rather than
   slicing one; at this block width it lands on the middle and the building reads corner-on. Short
   blocks are left flat — a roofline already reads them, and faceting the whole row turns the skyline
   back into texture.
 
-So a city frame has four rungs on the same ladder the mountains use, measured as distance from the
-sky: **near layer 0.00, its shaded side 0.27, the skyline's lit face 0.30, its shadow face 0.54.**
+So a city frame has **two tones, not four**, measured as distance from the sky: **a lit face at 0.30
+and a shadow face at 0.54**, used by the near layer and the skyline alike. One city, one material,
+front to back. The corner seam where two near buildings meet is a third value, 0.78, but it is a
+3-unit hairline rather than a plane — it lands on the shaded side of the building it belongs to, so
+it has to clear 0.54 to be seen at all.
 
-The **facets run the other way from the ladder**, and that is the point. Distance costs internal
-contrast before it costs anything else — a far building's own faces converge toward each other long
-before the building stops reading — so the layer that should look crisply divided is the near one.
-The near split is 0.27 against the skyline's 0.24, and in perceived lightness the near facet is the
-stronger one on all eight presets in both playback states, by 1.05× to 1.22×.
+The near layer spent a while a rung nearer — 0.00 body against the skyline's 0.30, and 0.27 against
+0.54 — on the reasoning that the front of the frame should be the strongest thing in it. In practice
+the band simply read *brighter and cleaner* than the towers: not as the same downtown closer up, but
+as a different, better-lit one pasted over it. Tone was never what separated these two layers anyway.
+The sky gap cut around every near shape spends the **whole** silhouette-vs-sky contrast, where a rung
+of a ladder spends a fraction of one, so giving the rung back costs nothing that was doing any work.
 
-It was built the opposite way round first, with a 0.32 split on the towers against 0.26 up front, and
-the near layer kept reading flat no matter how hard its own shade was pushed: it was being asked to
-out-contrast a far layer that had no business being that defined. Softening the towers got there
-without spending contrast the tight palettes do not have.
-
-The one rule the near shade must keep is **ordering** — it has to stay below the skyline's lit face,
-so the near layer's darkest tone still reads as nearer than the skyline's lightest and the two
-ladders do not interleave. The 0.03 between them is nominal; at that distance they are the same tone
-on any palette, and it is the sky gap that actually parts the layers. What the margin buys is only
-that the near shade never crosses *below* the skyline, which would read as the front of the frame
-lying behind the back of it.
+The facets are equal for the same reason. The near split was deliberately the stronger one at 0.27
+against the towers' 0.24 — distance costs internal contrast first, so the crisply divided layer
+should be the near one — and it is a real effect, worth 1.05× to 1.22× in perceived lightness. But it
+was being *added on top of* a body-tone difference, and the two together are what read as two
+materials. With the bodies matched there is nothing left for a facet difference to do but reintroduce
+the split.
 
 The skyline was softened by moving its **shadow face only**, 0.62 → 0.54. Moving the lit face too
 took the whole layer a step further toward the sky, and since the mix runs toward the background that
@@ -220,7 +221,8 @@ reads as the towers going darker on a dark palette — a change to the picture's
 was wanted was a change to the split. The lit face is the layer's depth; the distance to the shadow
 face is its facet. Separate decisions.
 
-0.54 is also the floor on how soft the towers can go, and that part is measured rather than judged.
+0.54 is also the floor on how soft either layer's shadow face can go — the near layer inherits the
+constraint along with the tone — and that part is measured rather than judged.
 A lit window is drawn at full strength over whichever face it lands on, and on all eight presets the
 accent's luminance sits *between* the silhouette colour and the sky — so as a face is mixed toward
 the sky its luminance sweeps down and, somewhere in that sweep, crosses the lit colour and erases the
@@ -515,6 +517,19 @@ folder is never overwritten — a repeat render becomes `..._2`.
 `py lss_studio\lss_render.py --help` lists every flag, grouped as **slate**, **look**, **shape**
 and **output** — the same four groups the window uses.
 
+### What changed in 1.7.1
+
+`--style city` only, and only its tones. No flags, no defaults, no geometry.
+
+The near layer is now drawn in **the same two tones as the skyline behind it** — lit face 0.30,
+shadow face 0.54 — where 1.7.0 kept it a rung nearer at 0.00 and 0.27. Shipped that way, the band
+read as brighter and cleaner than the towers rather than as the same buildings closer up. The layers
+were never parted by tone in the first place: the cut of sky around every near shape does that, and
+it spends far more contrast than a rung of a ladder can. The corner seam between near buildings moved
+with the face it sits on, 0.55 → 0.78, or it would have vanished into it.
+
+Every other silhouette renders byte-for-byte what it rendered in 1.7.0, verified by SHA.
+
 ### What changed in 1.7.0
 
 `--style city` is substantially redrawn. No defaults moved for any other style and no flag changed
@@ -528,8 +543,8 @@ its name, but one flag changed what it reaches:
 
 What the style gained: a near layer of the same buildings seen closer — narrower, touching, deeply
 notched, more brightly lit than the towers; a per-column ceiling measured from the slate's own text
-so the skyline rises higher where nothing is above it; masts proportional to their own building; and
-a depth ladder whose facets run near-strong, far-soft. See [Depth](#depth) and
+so the skyline rises higher where nothing is above it; and masts proportional to their own building.
+See [Depth](#depth) and
 [How high the towers may go](#how-high-the-towers-may-go).
 
 Every other silhouette is untouched — `blocks`, `houses`, `topo`, `mountains`, `forest` and

@@ -245,30 +245,17 @@ HOUSE_FACE, HOUSE_SIDE = 0.22, 0.46
 # to the picture's weight, when all that was wanted was a change to the split.
 # The lit face is the layer's depth; the distance to the shadow face is its
 # facet. They are separate decisions and only the second one was in question.
-CITY_FACE, CITY_SHADOW = 0.30, 0.54          # a 0.24 split, down from 0.32,
-                                             # against the near layer's 0.27
-FORE_SIDE = 0.27                 # the near layer's own shaded side, and the
-                                 # STRONGER facet of the two: 0.27 here against
-                                 # the towers' 0.24.
-                                 #
-                                 # The one rule it must keep is ordering - it
-                                 # has to stay below CITY_FACE, so the near
-                                 # layer's darkest tone still reads as nearer
-                                 # than the skyline's lightest and the two
-                                 # ladders do not interleave. Rungs in order:
-                                 # near 0.00, near shade 0.27, skyline 0.30,
-                                 # skyline shade 0.54.
-                                 #
-                                 # 0.03 off the skyline is a nominal gap and it
-                                 # is not what separates the layers - at this
-                                 # distance the two are the same tone on any
-                                 # palette. The sky gap cut round every near
-                                 # shape is what parts them, and it spends the
-                                 # whole silhouette-vs-sky contrast rather than
-                                 # a fraction of one. What this margin buys is
-                                 # only that the near shade never crosses BELOW
-                                 # the skyline, which would read as the front of
-                                 # the frame lying behind the back of it.
+CITY_FACE, CITY_SHADOW = 0.30, 0.54          # a 0.24 split, down from 0.32
+# The near layer is drawn in the SAME two tones as the skyline behind it - one
+# city, one material, front to back. It was a rung nearer for a while (0.00 body
+# against the skyline's 0.30, and 0.27 against 0.54), which is the ladder the
+# comment above still describes for the towers, and the near band read as
+# brighter and cleaner than the towers rather than as the same buildings closer
+# up. Tonal depth was never what separated these two layers anyway: the sky gap
+# cut around the band spends the whole silhouette-vs-sky contrast, where a rung
+# of the ladder spends a fraction of one. Giving the rung back costs nothing
+# that was doing any work and buys a single consistent material.
+FORE_FACE, FORE_SIDE = CITY_FACE, CITY_SHADOW
 LW_RIDGE, LW_CREASE = 4.5, 3.5   # design units
 LW_TREE, LW_HOUSE = 3.5, 4.0
 LW_CORNER = 3.0                  # the lit/shade division, when there is no
@@ -278,19 +265,21 @@ LW_TREE_GAP = 5.0                # a street tree's sky gap. Straddles the
 LW_FORE_GAP = 5.0                # ...and the city's near layer, for the same
                                  # reason: a filled roofline crossing a filled
                                  # tower is otherwise the identical colour
-FORE_SEAM = 0.55                 # the crease where two near buildings meet.
-                                 # Deeper than the layer's own shaded side and
-                                 # allowed to be: FORE_SIDE is capped by the
-                                 # ladder because it is a PLANE, and a 3-unit
+FORE_SEAM = 0.78                 # the crease where two near buildings meet.
+                                 # It lands on the shaded side of the building
+                                 # it belongs to - that face covers the left
+                                 # third and this is the left edge - so it has
+                                 # to clear FORE_SIDE, not FORE_FACE. It sat at
+                                 # 0.55 against a 0.27 face and moved with it
+                                 # when the face went back to 0.54, keeping the
+                                 # same 0.24 step.
+                                 #
+                                 # A plane is capped by the ladder; a 3-unit
                                  # line is not - nothing reads a hairline as a
-                                 # layer, so it can go as dark as it needs to.
+                                 # layer, so it can go as far as it needs to.
                                  # It has to be a tone and not a sky gap: sky
                                  # here would put back exactly the separation
-                                 # the band is built to remove. That does mean
-                                 # it is weak where tone is weak - 1.21 on
-                                 # Evening against 1.71 on Night - and on those
-                                 # two palettes the varied top edge is what
-                                 # tells the buildings apart instead.
+                                 # the band is built to remove.
 
 
 def _lum(c):
@@ -495,13 +484,13 @@ def draw_scene(dr, sc, W, H, col, bg, played=False, face="outline",
             dr.polygon(_pts(t["poly"], k), fill=rgb(bg))
             _stroke(dr, t["poly"], k, c, LW_HOUSE, close=True)
 
-    # The city's near layer, last, because it stands in front of everything -
-    # and the only thing in a city frame drawn at full strength. It comes off
-    # the same list in build order, so a tree in a gap lands over the buildings
-    # either side of it, and each shape cuts a sky gap before it fills, exactly
-    # as a street tree does and for the same reason: the skyline behind it is
-    # the same colour, only weaker, and a tone step alone would not part them
-    # on the palettes with nothing to spare.
+    # The city's near layer, last, because it stands in front of everything. It
+    # comes off the same list in build order, so a tree in a gap lands over the
+    # buildings either side of it, and each shape cuts a sky gap before it
+    # fills, exactly as a street tree does - and here that gap is the ONLY
+    # thing parting the two layers, since the band is now drawn in the same two
+    # tones as the skyline behind it. Which is the right way round: a tone step
+    # would have nothing to spend on the tight palettes anyway.
     fore = sc.get("fore", [])
     blocks = [f for f in fore if not f.get("tree")]
     # The sky gap belongs to the BAND, not to each building in it. Laying every
@@ -515,12 +504,13 @@ def draw_scene(dr, sc, W, H, col, bg, played=False, face="outline",
             _stroke(dr, f["poly"], k, bg, LW_FORE_GAP, close=True)
     for f in blocks + [f for f in fore if f.get("tree")]:
         c = _band_col(bands, f["cx"], k, col)
+        body = mix(c, bg, _depth(FORE_FACE, c, bg))
         if filled:
             # a tree stands in FRONT of the band, so it keeps its own gap - and
             # takes it here, after the band is down, or the band would fill it in
             if f.get("tree"):
                 _stroke(dr, f["poly"], k, bg, LW_FORE_GAP, close=True)
-            dr.polygon(_pts(f["poly"], k), fill=rgb(c))
+            dr.polygon(_pts(f["poly"], k), fill=body)
         else:
             dr.polygon(_pts(f["poly"], k), fill=rgb(bg))
             _stroke(dr, f["poly"], k, c, LW_HOUSE, close=True)
