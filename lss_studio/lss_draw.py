@@ -321,6 +321,14 @@ def draw_scene(dr, sc, W, H, col, bg, played=False, face="outline",
         _stroke(dr, m["poly"][:-1], k, ridge, LW_RIDGE)   # flanks, not the base
         _stroke(dr, m["crease"] if face == "twotone" else m["spur"],
                 k, ridge, LW_CREASE)
+    if sc.get("mountains"):
+        # A flank stroke ends ON the base, so it hangs half a line-width below
+        # it, and a crease ends there too. That used to fall off the bottom of
+        # the frame; now the range stands on a visible ground line, and a row of
+        # drips along it reads as a fault. Cut them with the sky - the same
+        # occlusion every shape here gets by being filled with the sky first.
+        # The trees come after, so the ones in front still stand past the line.
+        dr.rectangle([0, sc["mtn_base"] * k * SS, W * SS, H * SS], fill=rgb(bg))
 
     for t in sc.get("trees", []):
         c = _band_col(bands, t["cx"], k, col)

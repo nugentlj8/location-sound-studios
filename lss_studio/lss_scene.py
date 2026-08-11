@@ -57,11 +57,22 @@ FILLED_STYLES = {"topo", "blocks", "houses", "city"}
 # The slate's "CITY . CONDITIONS" baseline sits at 360, i.e. half the frame, so
 # nothing here may rise above ~389 or the silhouette collides with the text.
 GROUND = 690.0                   # where tree trunks stand
-MTN_BASE = 726.0                 # just past the bottom edge, so the range runs
-                                 # off the frame instead of floating on a strip
-                                 # of sky the trees then stand in
+MTN_BASE = GROUND                # the range stands on the same ground line the
+                                 # trees do, rather than running off the bottom
+                                 # edge. Every other style leaves a strip of
+                                 # frame below its baseline - blocks and houses
+                                 # on TOWN_BASE, trees on GROUND - and a range
+                                 # that alone bled off the edge read as a
+                                 # different drawing. Deriving it from GROUND
+                                 # rather than repeating 690 is what keeps the
+                                 # two lines together if either ever moves.
 MTN_TOP_MIN = 500.0              # the quietest recording's tallest summit
-MTN_TOP_MAX = 392.0              # the loudest recording's tallest summit
+MTN_TOP_MAX = 392.0              # the loudest recording's tallest summit, held
+                                 # just clear of the slate baseline at 360. The
+                                 # two are absolute y, so raising MTN_BASE
+                                 # shortens the range rather than sliding it up
+                                 # into the text - which is the intent: the
+                                 # summits sit where they always did.
 # rise over run for a flank. A mountain's WIDTH follows from its height and one
 # of these, rather than from the gap to its neighbour - deriving width from the
 # gap is what turns a sparse range into shallow zigzag lines.
@@ -855,6 +866,9 @@ def build(style, db, lv, detail="Default", scale="Skyline (rank)",
     seed = seed_from(db)
     rng = np.random.default_rng(seed)
     sc = {"style": style, "seed": seed, "detail": f,
+          # the ground line the range stands on, so the draw can trim the flank
+          # strokes to it without importing this module's layout constants
+          "mtn_base": MTN_BASE,
           "mountains": [], "trees": [], "houses": [], "town_trees": [],
           "lights": []}
     if style in ("mountains", "mountains_forest"):
