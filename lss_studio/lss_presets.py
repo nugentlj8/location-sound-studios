@@ -215,6 +215,31 @@ def series_scene(series_key, presets):
     return "nature" if s.get("geometry") == "curves" else "town"
 
 
+# Which silhouette a series draws when --style says nothing. A SERIES rather
+# than a scene default, because the three town series do not want the same
+# one: Towns is houses while City stays on blocks. Shipped in code for the same
+# reason SERIES_SCENE is - an existing lss_presets.json has no key to read.
+SERIES_STYLE = {
+    "Sounds in Towns": "houses",
+    "Sounds of Nature": "mountains_forest",
+}
+
+
+def series_style(series_key, presets):
+    """The silhouette a series defaults to.
+
+    A "style" key in the JSON wins, then the shipped map, then the scene's own
+    first style. Anything the scene cannot actually wear is ignored rather than
+    passed on to fail check() later.
+    """
+    import lss_scene
+    scene = series_scene(series_key, presets)
+    ok = lss_scene.SCENE_STYLES[scene]
+    s = presets["series"].get(series_key) or {}
+    want = s.get("style") or SERIES_STYLE.get(series_key)
+    return want if want in ok else lss_scene.DEFAULT_STYLE[scene]
+
+
 def theme_extras(theme_key, presets):
     """(suffix, cycle_colours, cycle_minutes) for a theme."""
     t = presets["themes"].get(theme_key) or {}

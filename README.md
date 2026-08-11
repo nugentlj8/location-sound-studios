@@ -27,7 +27,7 @@ Open a fresh window afterward. Without it the app falls back to Arial.
 ## The window
 
 The audio file and the output folder sit at the top, and **Render**, **Thumbnail only** and
-**Preview at** sit at the bottom, always visible. Everything else is on four tabs, grouped by what
+**Preview at** sit at the bottom, always visible. Everything else is on five tabs, grouped by what
 it decides:
 
 | Tab | What it decides |
@@ -45,15 +45,18 @@ it decides:
 Each series is set in a **scene**, and the scene decides which silhouettes it can wear. Pick one
 with the **Silhouette** dropdown, or `--style` from the command line:
 
-| Scene | Series | Styles |
-|---|---|---|
-| town | Sounds of the City, in Towns, in Spaces | `blocks` (default), `houses` |
-| nature | Sounds of Nature | `topo` (default), `mountains`, `forest`, `mountains_forest` |
+| Scene | Series | Styles | Default |
+|---|---|---|---|
+| town | Sounds of the City, in Spaces | `blocks`, `houses` | `blocks` |
+| town | Sounds in Towns | `blocks`, `houses` | `houses` |
+| nature | Sounds of Nature | `topo`, `mountains`, `forest`, `mountains_forest` | `mountains_forest` |
 
-The defaults are what these series have always drawn, so existing commands are unaffected.
+The default is per **series**, not per scene — Towns draws houses while City stays on blocks. To
+put your own series on a particular silhouette, add `"style": "houses"` to it in
+`lss_presets.json`.
 
 - **`blocks`** — the skyline of rectangular towers, one per block of the recording.
-- **`houses`** — a low residential row with varied rooflines and the occasional street tree. Only
+- **`houses`** — a low residential row with varied rooflines, windows, doors and street trees. Only
   the loudest few percent of the recording earns a taller block, so the skyline stays a town rather
   than a city.
 - **`topo`** — the smoothed contour line.
@@ -72,7 +75,34 @@ be pushed further back and still read, while a mid-toned accent goes muddy at th
 That keeps the played and unplayed halves at a comparable weight in every palette.
 
 Everything generated is seeded from the recording's own loudness envelope, so the same file always
-renders the same shape. The seed is written into the render's `.json` sidecar.
+renders the same shape — including every window, which house is occupied and which tree is which
+shape. The seed is written into the render's `.json` sidecar.
+
+### Inside a town
+
+`houses` draws the street in some detail:
+
+- **Windows and doors**, laid out per house from the recording's seed. Panes are separated by gaps
+  of sky rather than by drawn glazing bars — a gap carries the same contrast the silhouette's own
+  edge does, where a hairline stroke would disappear on the tighter palettes.
+- **Lit windows.** Most are unlit and read as dark openings; a few are lit. Occupancy is decided per
+  house first and only then per window, so lit windows cluster into a house instead of speckling
+  evenly down the street. A lit window is drawn in whichever of the two colours the playhead is
+  *not* showing there — accent ahead of it, silhouette colour behind it — so a house that is
+  occupied stays occupied as the playhead crosses it instead of going dark.
+- **Facade shading.** Light comes from the right, as it does on the mountains, and the left of each
+  house carries a second, dimmer tone. It uses the same measure the mountains do — distance from the
+  sky, scaled by how much contrast the palette actually has — at a much smaller step, because in a
+  town the houses are what the playhead recolours and they have to stay dominant. With outlines
+  instead of a fill there is nothing to divide, so only the division is drawn, and on a house that
+  vertical run reads as a building corner.
+- **Street trees in two shapes**, evergreen and deciduous, mixed. The nature silhouettes stay
+  evergreen-only.
+
+Where a tree crosses a house, the tree is drawn at full strength with a thin gap of sky around it.
+Without that gap a filled tree and a filled house are the same colour and the tree simply
+disappears into the row — and on a palette like Morning, where accent and sky are only 1.90 apart,
+a tone step alone is not enough to separate them.
 
 ```
 py lss_studio\lss_render.py recording.flac --style mountains_forest ...
@@ -96,18 +126,36 @@ shape those styles carry — how many summits, how many trees, how many houses. 
 not pixels, so a thumbnail and the full video of the same recording read identically; only the
 resolution differs. Tower width stays the control for `blocks`.
 
+Windows are much finer than anything else drawn here, so they have a floor: a pane smaller than a
+fixed minimum is not drawn. That test is applied **once, when the shape is built**, in the same
+1280×720 design units everything else uses — never against the output size. A pane that survives it
+therefore exists in the thumbnail and the video alike, which is what keeps the two the same image
+rather than two levels of detail. Turning detail up gives more houses, so each is narrower and its
+windows stop subdividing before they stop existing:
+
+| `--detail` | houses | house width | panes drawn |
+|---|---|---|---|
+| Coarse | 11 | 122u | 177 |
+| Default | 16 | 84u | 162 |
+| Fine | 23 | 58u | 134 |
+| 2.5 | 40 | 34u | 73 |
+
+The smallest pane any setting produces is 5 design units — 7.7px on the 1920 thumbnail and 10.2px
+on a 2560 video.
+
 ### Checking a look without an encode
 
-Tick **Thumbnail only** and set **Preview at** to a percentage — or `--thumb-only --progress 0.5`
-from the command line — and the thumbnail is drawn as a mid-playback frame instead of the unplayed
-state, so you can see the fill behaviour in seconds rather than waiting for a full video:
+A thumbnail is drawn as the **finished, fully-played frame** — the state the video ends on. Set
+**Preview at** to a percentage, or `--progress` from the command line, to see any other point
+instead, so you can check the fill behaviour in seconds rather than waiting for a full video:
 
 ```
 py lss_studio\lss_render.py recording.flac --style mountains_forest --thumb-only --progress 0.5 ...
+py lss_studio\lss_render.py recording.flac --thumb-only --progress 0 ...   # the unplayed frame
 ```
 
 Both controls sit beside the Render button, outside the tabs, since they decide what actually gets
-made. Leave Preview at blank for the unplayed frame.
+made. Leave Preview at blank and you get the finished frame; type `0` for the unplayed one.
 
 Two further switches change the treatment. **Trees before the playhead** (`--tree-ahead
 faint|outline`) sets how a tree looks before the playhead reaches it, and **Mountain faces**
@@ -250,7 +298,27 @@ folder is never overwritten — a repeat render becomes `..._2`.
 `py lss_studio\lss_render.py --help` lists every flag, grouped as **slate**, **look**, **shape**
 and **output** — the same four groups the window uses.
 
-Two things changed in 1.3.0:
+### What changed in 1.5.0
+
+Three defaults moved. Each one changes what an existing command renders, and each has an explicit
+flag that brings the old behaviour back unchanged:
+
+| | Was | Now | Old behaviour |
+|---|---|---|---|
+| Sounds in Towns silhouette | `blocks` | `houses` | `--style blocks` |
+| Sounds of Nature silhouette | `topo` | `mountains_forest` | `--style topo` |
+| Thumbnail playback point | unplayed | fully played | `--progress 0` |
+
+In the window, the Silhouette dropdown now follows the series you pick until you choose a
+silhouette yourself, and **Preview at** starts at 100.
+
+Nothing about the nature silhouettes themselves changed — `--style mountains_forest --progress 1`
+renders byte-for-byte what it rendered in 1.4.2. Only which style Sounds of Nature reaches for by
+default is different.
+
+### What changed in 1.3.0
+
+Two things:
 
 - **`--preset` is now `--series`.** It always chose a series, while `--colors` chooses a colour
   preset, so "preset" meant two different things. `--preset` still works and always will; nothing

@@ -298,8 +298,9 @@ class App:
         self.thumbonly.trace_add("write", lambda *_a: self._thumbonly_changed())
         ttk.Label(act, text="Preview at").pack(side="left", padx=(20, 6))
         self.preview = ttk.Entry(act, width=5)
+        self.preview.insert(0, "100")
         self.preview.pack(side="left")
-        ttk.Label(act, text="%  blank = unplayed",
+        ttk.Label(act, text="%  100 = the finished frame, 0 = unplayed",
                   foreground=MUTED).pack(side="left", padx=(6, 0))
 
         self.bar = ttk.Progressbar(f, mode="determinate", maximum=1000)
@@ -333,12 +334,20 @@ class App:
         threading.Thread(target=worker, daemon=True).start()
 
     def _series_changed(self, _evt=None):
-        """Offer only the silhouettes this series' scene actually has."""
+        """Offer only the silhouettes this series' scene actually has, and land
+        on the one that series draws by default.
+
+        Keeping the current pick when it happens to be valid would mean the
+        town series never showed their own defaults apart, since they share a
+        scene - so the default wins until the dropdown is used deliberately.
+        """
         scene = lss_presets.series_scene(self.series.get(), PRESETS)
         styles = lss_scene.SCENE_STYLES[scene]
         cur = self.style.get()
         self.style["values"] = styles
-        self.style.set(cur if cur in styles else lss_scene.DEFAULT_STYLE[scene])
+        chosen = getattr(self, "_style_picked", False) and cur in styles
+        self.style.set(cur if chosen
+                       else lss_presets.series_style(self.series.get(), PRESETS))
         self._style_changed()
 
     def _thumbonly_changed(self):
@@ -362,6 +371,8 @@ class App:
     def _style_changed(self, _evt=None):
         """Grey out a treatment the chosen silhouette never reaches - blocks
         has no trees to draw faint, and a forest has no mountain faces."""
+        if _evt is not None:                 # picked, rather than filled in by
+            self._style_picked = True        # a change of series
         s = self.style.get()
         for w, styles in ((self.ahead, lss_scene.TREE_AHEAD_STYLES),
                           (self.face, lss_scene.MOUNTAIN_FACE_STYLES)):
@@ -520,16 +531,17 @@ class App:
 
     def _preview_frac(self):
         """(fraction, error). --progress as a percentage, since that is how a
-        person says it. Blank means the unplayed frame, i.e. 0."""
+        person says it. Blank means the finished frame, i.e. 100 - the same
+        default the CLI takes. Type 0 for the unplayed state."""
         s = self.preview.get().strip().rstrip("%").strip()
         if not s:
-            return 0.0, None
+            return 1.0, None
         try:
             v = float(s)
         except ValueError:
-            return 0.0, f"Preview must be a percentage like 50, not '{s}'."
+            return 1.0, f"Preview must be a percentage like 50, not '{s}'."
         if not 0 <= v <= 100:
-            return 0.0, "Preview must be between 0 and 100%."
+            return 1.0, "Preview must be between 0 and 100%."
         return v / 100.0, None
 
     def _offer_update(self, version):

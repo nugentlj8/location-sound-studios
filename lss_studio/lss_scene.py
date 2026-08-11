@@ -78,6 +78,10 @@ HOUSE_N = 16                     # houses across the frame at Default detail.
                                  # coarser grid and --towers keeps meaning only
                                  # what it always did, for blocks.
 HOUSE_BODY = 0.62                # body height as a fraction of house width
+HOUSE_SIDE_F = 0.30              # how much of a house's width is its shaded
+                                 # side. A flat division, like the mountain
+                                 # crease - the point is the facet, not a
+                                 # physically derived surface
 TOWN_TREE_P = 0.28               # chance of a street tree between two houses
 TOWN_TREE_H = 0.155 * DH         # taller than the rooflines. A street tree the
                                  # same height as a house disappears into it
@@ -85,6 +89,40 @@ TOWN_TREE_H = 0.155 * DH         # taller than the rooflines. A street tree the
                                  # it has to clear the roof to read at all.
                                  # Like the houses, it does not answer to the
                                  # audio.
+TOWN_DECID_P = 0.45              # chance a street tree is deciduous rather
+                                 # than evergreen. A town has both; the nature
+                                 # styles are deliberately left evergreen-only
+
+# --- windows, doors -------------------------------------------------------
+# The finest detail anything here draws, and the only detail small enough for
+# the design-unit basis to matter. Two rules keep a thumbnail and a video the
+# same image rather than two levels of detail:
+#
+#   1. Panes are gated at BUILD time, in design units, never at draw time - so
+#      whichever panes survive exist at every output size identically.
+#   2. A pane is subdivided by a GAP filled with sky, never by a drawn mullion.
+#      There is no thin stroke anywhere in this detail, which is what lets it
+#      survive the palettes with the least contrast to spend.
+#
+# Detail therefore reaches windows the same way it reaches everything else, by
+# changing how many houses there are: more houses are narrower houses, and a
+# bay that falls under PANE_MIN simply has no window.
+PANE_MIN = 5.0                   # design units. Below this a pane is dropped
+                                 # rather than drawn as mush - 7.5px on the
+                                 # 1920 thumbnail, 10px on the 2560 video
+PANE_GAP = 3.0                   # the sky gap between panes IS the mullion
+BAY_W = 27.0                     # facade width per window bay
+WIN_W_F, WIN_H_F = 0.52, 0.34    # window size, per bay and per facade height
+WIN_SILL_F = 0.60                # window centre, up from the base
+DOOR_W_F, DOOR_H_F = 0.40, 0.58  # door size, per bay and per facade height
+TOWER_BAY_W, TOWER_ROW_H = 23.0, 27.0    # a tall block gets a grid instead
+# Mostly unlit, a few lit - and clustered, because a house is occupied or it is
+# not. Uniform speckle across every house reads as noise; a lit house beside a
+# dark one reads as a street.
+HOUSE_OCCUPIED_P = 0.45          # chance a house is occupied at all
+HOUSE_LIT_P = 0.40               # chance one of ITS panes is lit
+TOWER_OCCUPIED_P = 0.85          # a block of flats nearly always has someone in
+TOWER_LIT_P = 0.30
 
 
 def seed_from(db):
@@ -360,6 +398,34 @@ def _tree_poly(rng, x, base, h, tiers):
     return [(x, base - h)] + right + left
 
 
+def _decid_poly(rng, x, base, h):
+    """One deciduous tree: a lumpy crown over a bare trunk, as one closed path.
+
+    Built to the same contract as the evergreen - a single simple polygon, so
+    it strokes or fills as one shape and never needs a second pass.
+    """
+    tw = h * 0.050
+    # a crown wider than about half the tree's height stops being a street tree
+    # and starts being a blob laid over the houses behind it
+    r = h * 0.29 * rng.uniform(0.90, 1.10)
+    cy = base - h + r                                # crown centre
+    # per-vertex jitter alone gives a starburst, since neighbouring vertices are
+    # independent. Smoothing the radii first leaves a rounded crown carrying a
+    # few lobes - which is the shape a shade tree actually reads as
+    a0, a1, n = -0.25 * math.pi, 1.25 * math.pi, 21
+    rad = smooth(r * (1.0 + rng.uniform(-0.16, 0.16, n + 1)), 1.1, passes=1)
+    crown = []
+    for i in range(n + 1):
+        a = a0 + (a1 - a0) * i / n
+        rr = float(rad[i])
+        if rng.random() < 0.16:                      # an occasional notch out
+            rr *= rng.uniform(0.84, 0.92)            # of the outline
+        crown.append((x + rr * math.cos(a), cy - rr * math.sin(a)))
+    yt = cy + r * 0.707                              # where the trunk meets it
+    return ([(x + tw, base), (x + tw, yt)] + crown
+            + [(x - tw, yt), (x - tw, base)])
+
+
 def _trees(db, detail, scale, dynamics, rng, vary):
     """Even spacing, small deterministic variation, size pinned to the frame.
 
@@ -419,6 +485,98 @@ def _roof(rng, x0, x1, top):
     return [(x0, top), (x0, top - lip), (x1, top - lip), (x1, top)], kind
 
 
+def _panes(rng, x0, y0, x1, y1, lit_p):
+    """One opening, split into panes by sky gaps. [] if it is too small to draw.
+
+    The split only happens when both halves AND the gap between them clear
+    PANE_MIN - so a narrow house loses its glazing bars before it loses its
+    windows, and loses its windows before it draws anything unreadable.
+    """
+    w, h = x1 - x0, y1 - y0
+    if w < PANE_MIN or h < PANE_MIN:
+        return []
+    cols = 2 if (w - PANE_GAP) / 2.0 >= PANE_MIN else 1
+    rows = 2 if (h - PANE_GAP) / 2.0 >= PANE_MIN else 1
+    pw = (w - PANE_GAP * (cols - 1)) / cols
+    ph = (h - PANE_GAP * (rows - 1)) / rows
+    out = []
+    for r in range(rows):
+        for c in range(cols):
+            px = x0 + c * (pw + PANE_GAP)
+            py = y0 + r * (ph + PANE_GAP)
+            out.append({"rect": (px, py, px + pw, py + ph),
+                        "lit": rng.random() < lit_p})
+    return out
+
+
+def _windows(rng, a, b, base, top, occupied_p, lit_p, door=True):
+    """A facade's openings: a row of windows and, usually, a door.
+
+    Occupancy is decided per BUILDING and only then per pane, so lit windows
+    cluster into a house instead of speckling evenly along the street.
+    """
+    hw, fh = b - a, base - top
+    if hw <= 0 or fh <= 0:
+        return []
+    p = lit_p if rng.random() < occupied_p else 0.0
+    bays = max(1, int(round(hw / BAY_W)))
+    bw = hw / bays
+    dbay = int(rng.integers(0, bays)) if door else -1
+    out = []
+    for i in range(bays):
+        cx = a + (i + 0.5) * bw
+        if i == dbay:                                # a door reaches the ground
+            dw, dh = bw * DOOR_W_F, fh * DOOR_H_F
+            if dw >= PANE_MIN and dh >= PANE_MIN:
+                out.append({"rect": (cx - dw / 2.0, base - dh, cx + dw / 2.0,
+                                     base), "lit": False})
+            continue
+        ww, wh = bw * WIN_W_F, fh * WIN_H_F
+        wy = base - fh * WIN_SILL_F
+        out += _panes(rng, cx - ww / 2.0, wy - wh / 2.0,
+                      cx + ww / 2.0, wy + wh / 2.0, p)
+    return out
+
+
+def _tower_windows(rng, a, b, base, top):
+    """A tall block gets a grid rather than a single storey of openings - which
+    is most of what makes it read as flats instead of an enlarged house."""
+    hw, fh = b - a, base - top
+    cols = max(1, int(round(hw / TOWER_BAY_W)))
+    rows = max(1, int(round(fh / TOWER_ROW_H)))
+    bw, bh = hw / cols, fh / rows
+    p = TOWER_LIT_P if rng.random() < TOWER_OCCUPIED_P else 0.0
+    ww, wh = bw * 0.50, bh * 0.44
+    out = []
+    for r in range(rows):
+        for c in range(cols):
+            cx = a + (c + 0.5) * bw
+            cy = top + (r + 0.5) * bh
+            out += _panes(rng, cx - ww / 2.0, cy - wh / 2.0,
+                          cx + ww / 2.0, cy + wh / 2.0, p)
+    return out
+
+
+def _clip_left(poly, xc, base):
+    """The part of a house left of xc, as its own polygon.
+
+    Every roofline this module builds travels left to right without doubling
+    back, so the cut is a single crossing and the result stays simple.
+    """
+    out = []
+    for (x0, y0), (x1, y1) in zip(poly, poly[1:]):
+        if x0 <= xc:
+            out.append((x0, y0))
+        if (x0 - xc) * (x1 - xc) < 0:
+            t = (xc - x0) / (x1 - x0)
+            out.append((xc, y0 + (y1 - y0) * t))
+            break
+    if len(out) < 2:
+        return None
+    out.append((xc, base))
+    return out
+
+
 def _houses(lv, detail, rng):
     """Mostly low houses, with a tall block kept for the loudest few percent so
     the skyline stays residential."""
@@ -446,9 +604,11 @@ def _houses(lv, detail, rng):
         hw = b - a
         if v >= cut:                                 # the rare tall one
             top = y0 - amp * float(v)
-            out.append({"poly": [(a, TOWN_BASE), (a, top), (b, top),
-                                 (b, TOWN_BASE)],
-                        "tower": True, "cx": (a + b) / 2.0})
+            poly = [(a, TOWN_BASE), (a, top), (b, top), (b, TOWN_BASE)]
+            out.append({"poly": poly, "tower": True, "cx": (a + b) / 2.0,
+                        "panes": _tower_windows(rng, a, b, TOWN_BASE, top),
+                        "shade": _clip_left(poly, a + hw * HOUSE_SIDE_F,
+                                            TOWN_BASE)})
             continue
         # proportion the body to its own width, so a house stays house-shaped
         # however many of them there are, and let level move it only a little
@@ -457,7 +617,12 @@ def _houses(lv, detail, rng):
         top = TOWN_BASE - body
         roof, kind = _roof(rng, a, b, top)
         poly = [(a, TOWN_BASE)] + roof + [(b, TOWN_BASE)]
-        h = {"poly": poly, "tower": False, "cx": (a + b) / 2.0}
+        # light comes from the right, as it does on the mountains, so the near
+        # side is lit and the division falls to the left of centre
+        h = {"poly": poly, "tower": False, "cx": (a + b) / 2.0,
+             "panes": _windows(rng, a, b, TOWN_BASE, top,
+                               HOUSE_OCCUPIED_P, HOUSE_LIT_P),
+             "shade": _clip_left(poly, a + hw * HOUSE_SIDE_F, TOWN_BASE)}
         if kind in ("gable", "hip") and rng.random() < 0.35:
             cxx = a + hw * rng.uniform(0.62, 0.78)
             cw = hw * 0.13
@@ -477,10 +642,14 @@ def _houses(lv, detail, rng):
         if rng.random() >= TOWN_TREE_P:
             continue
         x = -30.0 + i * w + rng.uniform(-0.14, 0.14) * w
-        trees.append({"poly": _tree_poly(rng, x, TOWN_BASE,
-                                         TOWN_TREE_H * rng.uniform(0.82, 1.18),
-                                         int(rng.integers(3, 5))),
-                      "cx": x})
+        th = TOWN_TREE_H * rng.uniform(0.82, 1.18)
+        if rng.random() < TOWN_DECID_P:
+            # a shade tree carries its height as MASS, where an evergreen
+            # carries it as a point, so the same number reads much heavier
+            poly = _decid_poly(rng, x, TOWN_BASE, th * 0.80)
+        else:
+            poly = _tree_poly(rng, x, TOWN_BASE, th, int(rng.integers(3, 5)))
+        trees.append({"poly": poly, "cx": x})
     return out, trees
 
 

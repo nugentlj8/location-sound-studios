@@ -203,8 +203,19 @@ TREE_FAINT = 0.62                # an unplayed tree, when drawn faint. Further
                                  # toward the sky than this and it holds on a
                                  # dark sky but washes out on the paler ones,
                                  # where there is less contrast to spend
+# The town's depth ladder, same measure as the mountains': distance from the
+# sky. Street trees stay at 0, i.e. full strength, so they separate from the
+# houses behind them once everything is filled in one colour - the same cue
+# mountains_forest uses, at a fraction of the distance. It has to be a small
+# step here: in a town the HOUSES are what the playhead recolours, so pushing
+# them back the way the mountains are pushed back would cost the progress read.
+HOUSE_FACE, HOUSE_SIDE = 0.22, 0.46
 LW_RIDGE, LW_CREASE = 4.5, 3.5   # design units
 LW_TREE, LW_HOUSE = 3.5, 4.0
+LW_CORNER = 3.0                  # the lit/shade division, when there is no
+                                 # fill to divide
+LW_TREE_GAP = 5.0                # a street tree's sky gap. Straddles the
+                                 # outline, so half of it shows outside
 
 
 def _lum(c):
@@ -254,13 +265,35 @@ def _band_col(bands, x, k, fallback):
     return bands[-1][1]
 
 
+def _pane(dr, p, k, c, bg, lit, filled):
+    """One window pane or door.
+
+    An UNLIT pane is whatever its wall is not - a sky hole punched in a solid
+    house, a solid block inside an outlined one. Either way it carries the same
+    contrast the silhouette's own edge already has, so it survives a palette
+    with nothing to spare.
+
+    A LIT pane is drawn in the colour the current state is NOT: accent ahead of
+    the playhead, foreground behind it. Painting it accent unconditionally
+    would make it vanish into the accent-filled body once the playhead passed,
+    i.e. an occupied house would empty as it played. It flips colour instead.
+    """
+    x0, y0, x1, y1 = p["rect"]
+    if p["lit"] and lit:
+        f = rgb(lit)
+    else:
+        f = rgb(bg) if filled else rgb(c)
+    dr.rectangle([x0 * k * SS, y0 * k * SS, x1 * k * SS, y1 * k * SS], fill=f)
+
+
 def draw_scene(dr, sc, W, H, col, bg, played=False, face="outline",
-               ahead="outline", filled=False, bands=None):
+               ahead="outline", filled=False, bands=None, lit=None):
     """One generative silhouette, back to front.
 
     `col` is the state colour: the foreground ahead of the playhead, the accent
-    behind it. The two layers are otherwise identical, so the sliding mask in
-    the video turns one into the other exactly where the playhead is.
+    behind it. `lit` is the other one of that pair, used only by lit windows.
+    The two layers are otherwise identical, so the sliding mask in the video
+    turns one into the other exactly where the playhead is.
 
     Shapes are filled with the SKY before they are stroked. That is what gives
     a nearer shape occlusion over a further one without a vector clipper, and
@@ -294,24 +327,49 @@ def draw_scene(dr, sc, W, H, col, bg, played=False, face="outline",
             dr.polygon(_pts(t["poly"], k), fill=rgb(bg))
             _stroke(dr, t["poly"], k, c, LW_TREE, close=True)
 
-    # houses, then the street trees in front of them. Both take the same fill
-    # treatment: in a town the whole row is what the playhead recolours, so a
-    # tree filling on the forest's schedule would fight that read.
-    town = []
+    # houses, then the street trees in front of them. Both fill on the same
+    # schedule: in a town the whole row is what the playhead recolours, so a
+    # tree filling on the forest's schedule would fight that read. Depth
+    # between them comes from the ladder above instead.
     for h in sc.get("houses", []):
+        c = _band_col(bands, h["cx"], k, col)
+        body = mix(c, bg, _depth(HOUSE_FACE, c, bg))
         # chimney first, house over it: the stack runs down to the ground so it
         # is never left hanging, and the body then hides everything below the
         # roof it pokes through
-        town += [(p, h["cx"]) for p in
-                 ([h["chimney"]] if h.get("chimney") else []) + [h["poly"]]]
-    town += [(t["poly"], t["cx"]) for t in sc.get("town_trees", [])]
-    for poly, cx in town:
-        c = _band_col(bands, cx, k, col)
+        for poly in ([h["chimney"]] if h.get("chimney") else []) + [h["poly"]]:
+            if filled:
+                dr.polygon(_pts(poly, k), fill=body)
+            else:
+                dr.polygon(_pts(poly, k), fill=rgb(bg))
+                _stroke(dr, poly, k, c, LW_HOUSE, close=True)
+        if h.get("shade"):
+            if filled:
+                dr.polygon(_pts(h["shade"], k),
+                           fill=mix(c, bg, _depth(HOUSE_SIDE, c, bg)))
+            else:
+                # no fill to divide, so only the division is drawn - on a house
+                # that vertical run reads as a building corner, where the same
+                # treatment on a mountain would be a stray diagonal
+                _stroke(dr, h["shade"][-2:], k, c, LW_CORNER)
+        for p in h.get("panes", []):
+            _pane(dr, p, k, c, bg, lit, filled)
+
+    for t in sc.get("town_trees", []):
+        c = _band_col(bands, t["cx"], k, col)
         if filled:
-            dr.polygon(_pts(poly, k), fill=rgb(c))
-        else:
-            dr.polygon(_pts(poly, k), fill=rgb(bg))
-            _stroke(dr, poly, k, c, LW_HOUSE, close=True)
+            # The tone step above carries the depth on most palettes. On the
+            # tight ones it cannot: Morning has 1.90 between accent and sky, so
+            # a fraction of that is nothing, and the tree goes back into the
+            # houses. A sky gap around the near shape spends the WHOLE of that
+            # contrast instead - it is the same occlusion the rest of this
+            # function gets by filling a shape with the sky before stroking it,
+            # and it reads exactly as well as the rooflines beside it do.
+            _stroke(dr, t["poly"], k, bg, LW_TREE_GAP, close=True)
+            dr.polygon(_pts(t["poly"], k), fill=rgb(c))   # full strength: this
+        else:                                             # is the near layer
+            dr.polygon(_pts(t["poly"], k), fill=rgb(bg))
+            _stroke(dr, t["poly"], k, c, LW_HOUSE, close=True)
 
 
 def progress_composite(bone, clay, frac, out):

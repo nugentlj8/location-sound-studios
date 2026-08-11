@@ -228,7 +228,11 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False):
                      line_col if line_col != "__cycle__" else acc, bg,
                      played=played, face=cfg.get("mountain_face") or scene_mod.MOUNTAIN_FACE[0],
                      ahead=cfg.get("tree_ahead") or scene_mod.TREE_AHEAD[0],
-                     filled=filled, bands=bands)
+                     filled=filled, bands=bands,
+                     # a lit window is drawn in whichever of the pair this
+                     # layer is not, so it still reads once the playhead has
+                     # painted the body in the other one
+                     lit=fg if played else acc)
     else:
         lay = D.row_layout(H, nrows, filled, top=0.66, bot=0.95)
         cols = [line_col if line_col != "__cycle__" else cfg["accent"]] * nrows
@@ -368,9 +372,13 @@ def output_base(cfg):
     return f"{ep} - {name}".strip(" -") if name else ep
 
 
-def _thumbnail(cfg, lv, tw, th, out, work, frac=0.0):
-    """One thumbnail. Above 0, `frac` cuts the played and unplayed layers at a
-    fixed x instead of a moving one - a mid-playback frame without an encode."""
+def _thumbnail(cfg, lv, tw, th, out, work, frac=1.0):
+    """One thumbnail. Between 0 and 1, `frac` cuts the played and unplayed
+    layers at a fixed x instead of a moving one - a mid-playback frame without
+    an encode. The ends need only one layer, so they skip the composite."""
+    if frac >= 1.0:                      # fully played: the accent layer IS it
+        return compose(cfg, lv, tw, th, cfg["accent"], out,
+                       time_text=cfg["start"], played=True)
     if frac > 0:
         b = compose(cfg, lv, tw, th, cfg["foreground"],
                     os.path.join(work, "_t_bone.png"), time_text=cfg["start"])
@@ -611,14 +619,18 @@ def run(cfg, progress=lambda s: None, on_progress=None):
         cfg["_scene"] = scene_mod.build(style, db, lv,
                                         detail=cfg.get("detail", "Default"),
                                         scale=scale, dynamics=dyn)
-        progress(f"Style {style}: {len(cfg['_scene']['mountains'])} summits, "
-                 f"{len(cfg['_scene']['trees'])} trees, "
-                 f"{len(cfg['_scene']['houses'])} houses "
-                 f"(seed {cfg['_scene']['seed']:016x})")
+        s = cfg["_scene"]
+        progress(f"Style {style}: {len(s['mountains'])} summits, "
+                 f"{len(s['trees']) + len(s['town_trees'])} trees, "
+                 f"{len(s['houses'])} houses, "
+                 f"{sum(len(h.get('panes', [])) for h in s['houses'])} windows "
+                 f"(seed {s['seed']:016x})")
 
     tw = int(cfg.get("thumb_width", 1920))
     th = round(tw * 9 / 16)
-    frac = float(cfg.get("progress", 0.0) or 0.0)
+    # a thumbnail shows the finished, fully-played frame unless asked otherwise
+    frac = cfg.get("progress", 1.0)
+    frac = 1.0 if frac is None else float(frac)
     # A variant set is for comparing looks, so it only runs without an encode -
     # the callers reject the combination up front, this is the belt and braces.
     variants = list(cfg.get("variants") or []) if cfg.get("thumb_only") else []
@@ -724,7 +736,9 @@ def main():
                    help="silhouette shape. nature: "
                         + ", ".join(scene_mod.SCENE_STYLES["nature"])
                         + "; town: " + ", ".join(scene_mod.SCENE_STYLES["town"])
-                        + ". Defaults to the series' own (topo or blocks)")
+                        + ". Defaults to the series' own: houses for Sounds in "
+                        "Towns, mountains_forest for Sounds of Nature, blocks "
+                        "elsewhere")
     g.add_argument("--detail", default="Default",
                    help="how much shape the silhouette styles carry: "
                         + ", ".join(scene_mod.DETAIL) + ", or a number like "
@@ -772,9 +786,10 @@ def main():
                    help="name the render folder and files. Defaults to --place")
     g.add_argument("--thumb-only", action="store_true",
                    help="render just the thumbnail - no video encode")
-    g.add_argument("--progress", type=float, default=0.0,
-                   help="render the thumbnail as a mid-playback frame, 0-1, "
-                        "instead of the unplayed state")
+    g.add_argument("--progress", type=float, default=1.0,
+                   help="how far through playback the thumbnail is drawn, 0-1. "
+                        "Defaults to 1, the finished fully-played frame; use "
+                        "--progress 0 for the unplayed state")
     g.add_argument("--thumb-width", type=int, default=1920,
                    help="thumbnail width in pixels; height follows at 16:9")
     g.add_argument("--width", type=int, default=2560, help="video width")
@@ -791,8 +806,10 @@ def main():
     if n.list_presets:
         for s in presets_mod.series_names(P):
             sc = presets_mod.series_scene(s, P)
+            d = presets_mod.series_style(s, P)
             print(f"series: {s}  [{sc}]  styles: "
-                  + ", ".join(scene_mod.SCENE_STYLES[sc]))
+                  + ", ".join(f"{v} (default)" if v == d else v
+                              for v in scene_mod.SCENE_STYLES[sc]))
         print("themes:", ", ".join(presets_mod.theme_names(P)))
         print("colors:", ", ".join(presets_mod.color_preset_names(P)))
         print("detail:", ", ".join(scene_mod.DETAIL) + ", or a number")
@@ -842,7 +859,7 @@ def main():
     cfg["outdir"] = n.outdir or default_outdir(P)
     cfg["geometry"] = presets_mod.series_geometry(n.series_key, P)
     cfg["scene"] = presets_mod.series_scene(n.series_key, P)
-    cfg["style"] = n.style or scene_mod.DEFAULT_STYLE.get(cfg["scene"], "blocks")
+    cfg["style"] = n.style or presets_mod.series_style(n.series_key, P)
     err = scene_mod.check(cfg["scene"], cfg["style"], n.rows, n.filled,
                           n.progress)
     if err:
