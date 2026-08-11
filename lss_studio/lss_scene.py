@@ -47,6 +47,11 @@ MOUNTAIN_FACE = ["twotone", "outline"]  # whether the faces carry a flat tone
 TREE_AHEAD_STYLES = {"forest", "mountains_forest"}
 MOUNTAIN_FACE_STYLES = {"mountains", "mountains_forest"}
 BLINK_STYLES = {"city"}                 # the only style with beacons to blink
+# ...and the styles --filled reaches. The three it misses define their own
+# fill - trees fill as the playhead passes them, mountains stay outlined - so
+# there is nothing for the switch to decide. check() and the GUI read this same
+# set, so the window greys out exactly what the validator would reject.
+FILLED_STYLES = {"topo", "blocks", "houses", "city"}
 
 # --- vertical layout, design units -----------------------------------------
 # The slate's "CITY . CONDITIONS" baseline sits at 360, i.e. half the frame, so
@@ -834,7 +839,7 @@ def check(scene, style, rows=1, filled=False, progress=0.0):
         return (f"--rows {rows} has no meaning for --style {style}: a "
                 "silhouette is one scene, not stacked envelope rows. Use "
                 f"--style {DEFAULT_STYLE[scene]} for multiple rows.")
-    if filled and style in ("mountains", "forest", "mountains_forest"):
+    if filled and style not in FILLED_STYLES:
         return (f"--filled has no meaning for --style {style}: the style "
                 "defines its own fill, with trees filling as the playhead "
                 "passes and mountains staying outlined.")

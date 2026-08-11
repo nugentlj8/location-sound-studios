@@ -211,6 +211,14 @@ only a ridgeline. The first of each is the default; `outline` on both gives a li
 frame. In the window each greys out for a silhouette it does not reach — `blocks` has no trees to
 draw faint, `forest` has no mountain faces.
 
+**Solid silhouette instead of outlines** is ticked by default in the window, since it is what the
+city, town and skyline styles are usually wanted as. It greys out and clears itself for
+`mountains`, `forest` and `mountains_forest`, which define their own fill — trees fill as the
+playhead passes them and mountains stay outlined, so there is nothing left for the switch to
+decide. Pick one of those and the box simply steps aside; pick a style that does take a fill and
+your choice comes back. On the command line nothing changed: `--filled` is still off unless you
+pass it, and passing it with one of those three is still an error rather than a silent no-op.
+
 ## Colours
 
 Pick a **Colours** preset to set the time of day. Each one sets the sky, the silhouette, and the

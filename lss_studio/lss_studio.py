@@ -187,8 +187,8 @@ class App:
         self.face = self._combo(look, lr, "Mountain faces",
                                 lss_scene.MOUNTAIN_FACE, lss_scene.MOUNTAIN_FACE[0])
         lr += 1
-        ttk.Label(look, text="These grey out for a silhouette that has no "
-                             "trees, mountains or antennas.",
+        ttk.Label(look, text="Each of these greys out for a silhouette it "
+                             "does not apply to.",
                   foreground=MUTED).grid(row=lr, column=1, sticky="w", pady=(0, 8))
         lr += 1
         self.blink = tk.BooleanVar(value=True)
@@ -197,9 +197,16 @@ class App:
                        "always shows them lit", variable=self.blink)
         self.blinkbox.grid(row=lr, column=1, sticky="w", pady=4)
         lr += 1
-        self.filled = tk.BooleanVar(value=False)
-        ttk.Checkbutton(look, text="Solid silhouette instead of outlines",
-                        variable=self.filled).grid(row=lr, column=1, sticky="w", pady=4)
+        # On by default, and remembered separately from the box: a silhouette
+        # that defines its own fill clears the box, and switching back to one
+        # that does not has to put the choice back rather than silently
+        # leaving it off.
+        self.filled = tk.BooleanVar(value=True)
+        self._filled_want = True
+        self.filledbox = ttk.Checkbutton(
+            look, text="Solid silhouette instead of outlines",
+            variable=self.filled, command=self._filled_clicked)
+        self.filledbox.grid(row=lr, column=1, sticky="w", pady=4)
         lr += 1
         self._series_changed()          # now that ahead/face exist to be greyed
 
@@ -374,6 +381,10 @@ class App:
             return []
         return [self.variants.get(i) for i in self.variants.curselection()]
 
+    def _filled_clicked(self):
+        """Remember the choice, so greying the box out does not lose it."""
+        self._filled_want = bool(self.filled.get())
+
     def _style_changed(self, _evt=None):
         """Grey out a treatment the chosen silhouette never reaches - blocks
         has no trees to draw faint, and a forest has no mountain faces."""
@@ -385,6 +396,12 @@ class App:
             w.config(state="readonly" if s in styles else "disabled")
         self.blinkbox.config(
             state="normal" if s in lss_scene.BLINK_STYLES else "disabled")
+        # Clear it rather than leaving it ticked and rejected at Render: the
+        # nature silhouettes define their own fill, so there is nothing here to
+        # decide and the validator would only refuse the combination.
+        ok = s in lss_scene.FILLED_STYLES
+        self.filledbox.config(state="normal" if ok else "disabled")
+        self.filled.set(self._filled_want if ok else False)
 
     # ---------- widget helpers ----------
     def _entry(self, f, r, label, default=""):
