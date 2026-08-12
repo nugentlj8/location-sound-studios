@@ -385,10 +385,15 @@ pass it, and passing it with one of those three is still an error rather than a 
 
 ## Stars
 
-A star field behind the silhouette, off by default, turned on with **Star field behind the
-silhouette** in the window or `--stars`. It works with every style — it is a *sky*, not silhouette
-geometry, so `blocks` and `topo` get one too — and the silhouette occludes it: no star is ever drawn
-on top of a building, a mountain or a tree.
+A star field behind the silhouette, **on by default** on every palette that can carry one. Turn it
+off with **Star field behind the silhouette** in the window, or `--no-stars`. It works with every
+style — it is a *sky*, not silhouette geometry, so `blocks` and `topo` get one too — and the
+silhouette occludes it: no star is ever drawn on top of a building, a mountain or a tree.
+
+On a palette with no field — Morning and Evening — the frame simply renders without one. That is the
+whole reason `--stars` still exists: asking for a field **by name** turns those into an error instead,
+so "why are there no stars?" gets an answer rather than a quiet frame. A render that never mentions
+stars is never interrupted by them.
 
 About 170 stars at Default detail, spread over the whole sky including the space around and behind
 the slate text, on a jittered grid rather than at random. Randomness alone clumps, and a clump in a
@@ -423,10 +428,11 @@ but it is also the slate text colour, so the field would speckle the letterforms
 ink. The accent is clearly not the text and reads as snow-lit night rather than as dirt — which is
 what makes Mist the palette for a snowy-night recording.
 
-Morning and Evening are **refused with an error**, not silently ignored — the same bargain the rest
-of the validator makes, and the alternative is finding out after a three-hour encode. Evening is
-refused on what the sky *is* rather than on contrast: white would survive there at 4.29, but it is a
-sunset. Add `"stars": "foreground"` to a palette in `lss_presets.json` to give your own sky a field.
+Morning and Evening simply render without a field. They are **refused with an error** only when
+`--stars` asked for one by name — the same bargain the rest of the validator makes, since the
+alternative there is finding out after a three-hour encode. Evening is refused on what the sky *is*
+rather than on contrast: white would survive there at 4.29, but it is a sunset. Add
+`"stars": "foreground"` to a palette in `lss_presets.json` to give your own sky a field.
 
 ### Twinkling
 
@@ -627,10 +633,22 @@ folder is never overwritten — a repeat render becomes `..._2`.
 `py lss_studio\lss_render.py --help` lists every flag, grouped as **slate**, **look**, **shape**
 and **output** — the same four groups the window uses.
 
+### What changed in 1.9.0
+
+**The star field is now on by default.** Every render on a night palette gets one without asking;
+`--no-stars`, or the tickbox in the window, turns it off.
+
+Morning and Evening have no field, and now simply render without one rather than refusing. They still
+refuse when `--stars` names a field explicitly — that is what the flag is for now, and the split is
+the point: a render that never mentions stars is never interrupted by them, while someone who asked
+gets told why none appeared. A bright palette renders byte-for-byte what it did before.
+
 ### What changed in 1.8.0
 
 A **star field**, off by default — `--stars`, or **Star field behind the silhouette** in the window.
 See [Stars](#stars). New `--no-twinkle` holds it steady in the video.
+
+> Turned **on by default** in 1.9.0 — see below.
 
 It is a background layer rather than silhouette geometry, so it works with every style, and the
 silhouette occludes it. Only the night palettes carry one, and each names which of its own colours

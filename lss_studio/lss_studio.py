@@ -202,8 +202,8 @@ class App:
         # night palette can. Remembered separately from the box for the reason
         # the fill is: switching to Morning and back has to put the choice
         # back rather than silently losing it.
-        self.stars = tk.BooleanVar(value=False)
-        self._stars_want = False
+        self.stars = tk.BooleanVar(value=True)
+        self._stars_want = True
         self.starsbox = ttk.Checkbutton(
             look, text="Star field behind the silhouette — night palettes only",
             variable=self.stars, command=self._stars_clicked)

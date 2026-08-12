@@ -840,16 +840,18 @@ def run(cfg, progress=lambda s: None, on_progress=None):
         cfg["star_color"] = presets_mod.star_color(
             key, P, cfg["foreground"], cfg["accent"], cfg["background"])
         if not cfg["star_color"]:
-            raise SystemExit(
-                f"--stars: the {key} palette has no star field. Its sky is too "
-                "bright to carry one. Choose from: "
-                + ", ".join(presets_mod.star_presets(P)))
-        for v in cfg.get("variants") or []:
-            if not presets_mod.star_role(v["name"], P):
+            # Stars are on by default, so a sky that cannot carry them must not
+            # be an error - Morning would stop rendering at all. It stays an
+            # error when they were asked for BY NAME, because then the useful
+            # answer is why they did not appear rather than a quiet frame
+            # without them. Which is the same split the GUI already draws: the
+            # box greys out on these palettes instead of being refused later.
+            if cfg.get("stars_explicit"):
                 raise SystemExit(
-                    f"--stars: the {v['name']} palette in --variants has no "
-                    "star field. Choose from: "
+                    f"--stars: the {key} palette has no star field. Its sky is "
+                    "too bright to carry one. Choose from: "
                     + ", ".join(presets_mod.star_presets(P)))
+            cfg["stars"] = False
     # degrade an unmounted network path here rather than in the GUI, so the CLI
     # stays usable off the studio's network too instead of dying in makedirs
     base = usable(cfg["outdir"], "LSS Renders")
@@ -939,10 +941,14 @@ def run(cfg, progress=lambda s: None, on_progress=None):
                         foreground=v["foreground"], accent=v["accent"])
             if cfg.get("stars"):
                 # each palette names its own star role, so a variant set
-                # compares the sky along with everything else
+                # compares the sky along with everything else - and a palette
+                # in the set that carries no field simply renders without one,
+                # which is the comparison actually being asked for
                 vcfg["star_color"] = presets_mod.star_color(
                     v["name"], presets_mod.load(), v["foreground"],
                     v["accent"], v["background"])
+                if not vcfg["star_color"]:
+                    vcfg["_sky"] = None
             v["file"] = _thumbnail(vcfg, lv, tw, th,
                                    os.path.join(outdir, variant_filename(slug, v)),
                                    work, frac)
@@ -1062,13 +1068,18 @@ def main():
                         "always shows them lit")
     g.add_argument("--stars", action="store_true",
                    help="a star field behind the silhouette, which occludes "
-                        "it. Off by default. Only on the night palettes - "
-                        "each says which of its own colours the stars take, "
-                        "so they are near-white on the dark skies and the "
-                        "accent on Mist. Works with every --style")
+                        "it. ON by default, so this is only needed to ask for "
+                        "one by name - which makes a palette that cannot carry "
+                        "stars an error instead of a frame without them. Only "
+                        "the night palettes have a field: each says which of "
+                        "its own colours the stars take, so they are "
+                        "near-white on the dark skies and the accent on Mist. "
+                        "Works with every --style")
+    g.add_argument("--no-stars", action="store_true",
+                   help="no star field, whatever the palette")
     g.add_argument("--no-twinkle", action="store_true",
                    help="hold the stars steady instead of letting them fade "
-                        "out and return (--stars only). Video only, and it "
+                        "out and return (stars only). Video only, and it "
                         "only removes motion - a thumbnail is always a still, "
                         "and the field is the same either way")
     g.add_argument("--filled", action="store_true",
@@ -1188,6 +1199,14 @@ def main():
         scene_mod.resolve_detail(n.detail)
     except ValueError as e:
         a.error(str(e))
+    # On unless refused. --stars is kept as the way to ask by NAME: it is what
+    # separates "no field here" from "no field, and here is why", which only
+    # matters to someone who expected one - see run().
+    # explicit FIRST: cfg is vars(n), so writing cfg["stars"] also writes
+    # n.stars, and reading the flag afterwards would read what was just put
+    # there rather than what was typed
+    cfg["stars_explicit"] = bool(n.stars)
+    cfg["stars"] = not n.no_stars
     cfg["align_loud"] = not n.no_align
     cfg["height_stat"] = n.height_stat
     cfg["towers"] = n.towers
