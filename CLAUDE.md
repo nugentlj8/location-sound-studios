@@ -28,6 +28,11 @@ See `lss_render.py main()` for the complete flag list — it's the authoritative
 There is no automated test suite. Verify changes by actually rendering: run the CLI against a short
 audio clip (or `--thumb-only` to skip the slow video encode) and inspect the output PNG/MP4.
 
+`tools/` holds the development scripts (not shipped by the updater, which only sends `lss_studio/`).
+When a change is meant to leave existing styles untouched, prove it rather than assert it:
+`py tools/identity_check.py baseline` on the old commit, `after` on the new one, then `compare` —
+90 style/palette/playback-state combinations, SHA'd. See `tools/README.md`.
+
 ## Architecture
 
 The three modules worth knowing before you edit them (`lss_presets.py` and `lss_draw.py` are
@@ -53,6 +58,12 @@ self-explanatory on reading):
      "bone"-coloured full frame, an accent-coloured ("clay") full frame, and a mask that slides left
      to right over the video's duration so the accent colour appears to "play across" the skyline in
      sync with elapsed time — this is what makes the timeline visually scrub as the clock advances.
+  5c. `--stars` puts a `_sky` in cfg (from `lss_scene.sky()`) which `compose()` draws *first*, so
+     the silhouette occludes it for free. Stars are the same colour in both playback layers, which
+     is what lets `star_layers()` twinkle one with a single `drawbox` where a beacon needs two.
+     A twinkler only gets filters where `_visible_stars()` finds bare sky under it, read off a
+     third "probe" frame composed without the sky — an occluded star would otherwise flash a
+     square on top of a building.
   5b. A `variants` list in cfg (from `lss_presets.variants()`, thumbnail-only) makes `run()` emit
      one thumbnail per palette instead of one. It sits *after* the envelope, levels and geometry,
      so N looks cost one audio pass and one `compose()` each — and share a silhouette exactly.
@@ -69,7 +80,9 @@ self-explanatory on reading):
   `--detail` count *features* rather than pixels. All randomness comes from a seed hashed off the
   envelope, so a recording always renders identically. `SCENE_STYLES` is the scene→style map and
   `check()` is the up-front validator both the CLI and GUI call; a bad combination is an error,
-  never a silent fallback.
+  never a silent fallback. `sky()` is the one thing here that is **not** silhouette geometry — the
+  star field, and the slot a sun or moon will later fill — and it runs on its own RNG stream salted
+  off the same seed, so stars can never move a building.
 - **`lss_studio.py`** — the Tkinter GUI. Builds the config dict expected by `lss_render.run()` and
   calls it in a background thread, polling a `queue.Queue` on a Tk `after()` timer for log lines and
   progress. Not the place to add render logic — it's a thin form over `lss_render.run()`.
@@ -106,7 +119,9 @@ and every running copy of the app picks it up on its next launch via `lss_update
   `resolve_colors()` in `lss_presets.py` are the only place they are settled, and every caller goes
   through them. An `accent2` in the preset data is **not** a fourth — nothing draws with it; it
   survives only as a companion colour offered in the GUI's colour dropdowns (`palette()`), which
-  are likewise derived from the preset data rather than listed by hand.
+  are likewise derived from the preset data rather than listed by hand. A `stars` key is not a
+  fourth either: it holds the *role name* of whichever of the three the star field takes
+  (`star_color()`), and its presence is also what says the palette may have stars at all.
 - Design coordinates are fixed at a 1280x720 basis and scaled by `k = W / 1280.0` everywhere in
   `compose()` — when adjusting layout, change the design-unit constant, not per-resolution numbers.
 - `usable()` in `lss_render.py` degrades a configured network drive path (`Z:\...`) to a folder in

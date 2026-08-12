@@ -383,6 +383,116 @@ decide. Pick one of those and the box simply steps aside; pick a style that does
 your choice comes back. On the command line nothing changed: `--filled` is still off unless you
 pass it, and passing it with one of those three is still an error rather than a silent no-op.
 
+## Stars
+
+A star field behind the silhouette, off by default, turned on with **Star field behind the
+silhouette** in the window or `--stars`. It works with every style — it is a *sky*, not silhouette
+geometry, so `blocks` and `topo` get one too — and the silhouette occludes it: no star is ever drawn
+on top of a building, a mountain or a tree.
+
+About 170 stars at Default detail, spread over the whole sky including the space around and behind
+the slate text, on a jittered grid rather than at random. Randomness alone clumps, and a clump in a
+star field reads as a mistake rather than as a cluster. Size and brightness come off one draw, so a
+bigger star is a brighter one, weighted hard toward the small and faint: it is the handful at full
+strength that read, and the ones near the sky that give the field depth.
+
+`--detail` counts stars the way it counts every other feature, so a Fine sky has more of them.
+
+Everything comes from the recording's seed, salted onto its own random stream — so **turning stars on
+cannot move a single building.** The silhouette is bit-identical either way.
+
+### Which palettes
+
+Only the night palettes, and **each one names which of its own colours the stars take** rather than
+introducing a fourth:
+
+| palette | stars | contrast on its sky |
+|---|---|---|
+| Night | silhouette colour | 13.08 |
+| Aurora | silhouette colour | 15.41 |
+| Alpenglow | silhouette colour | 11.97 |
+| Canopy | silhouette colour | 9.53 |
+| Alpine | silhouette colour | 6.98 |
+| Mist | **accent** | 4.76 |
+| Morning, Evening | — | not available |
+
+Every night palette's silhouette colour is already near-white, so "the silhouette colour" *is* the
+white default rather than an approximation of it. **Mist is the exception**, and deliberately: white
+measures 1.55 on that pale sky and simply is not there. Its silhouette colour would read, at 9.10,
+but it is also the slate text colour, so the field would speckle the letterforms in the identical
+ink. The accent is clearly not the text and reads as snow-lit night rather than as dirt — which is
+what makes Mist the palette for a snowy-night recording.
+
+Morning and Evening are **refused with an error**, not silently ignored — the same bargain the rest
+of the validator makes, and the alternative is finding out after a three-hour encode. Evening is
+refused on what the sky *is* rather than on contrast: white would survive there at 4.29, but it is a
+sunset. Add `"stars": "foreground"` to a palette in `lss_presets.json` to give your own sky a field.
+
+### Twinkling
+
+In the video a twinkling star **fades toward the sky and comes back** — full tone → part → gone →
+part → full tone — over a period of 9 to 17 seconds, so 3.5–6.7 fades a minute against the beacons'
+13–20. No step is shorter than about 1.5 seconds. That is the whole difference in intent: a beacon is
+a light that blinks and wants to be noticed, a star fades and must not be.
+
+It fades rather than brightening, and that is forced by what a filter can do rather than chosen. A
+`drawbox` paints **any** colour, the sky's included — the "only ever add" rule the beacons follow is
+a property of a *beacon*, which sits on a building whose colour differs either side of the playhead
+and varies along the frame under a cycle, so no single colour erases it. A star has none of that: it
+stands on bare sky, and the sky is one constant everywhere. So a filter can erase a star completely,
+which means the **baked** level is free to be the star's full brightness and the filters can carry
+the whole swing. Built the other way first — baked faint, filters brightening — and it was barely
+perceptible, because the floor could not go below the baked level and the swing came out under 2×.
+Fading instead gives 6×.
+
+Both video layers therefore bake the same full field the thumbnail draws, and a star is only ever
+taken *down* from there — so no frame of the video ever holds a thinner sky than its own thumbnail.
+
+Only about a quarter of the field twinkles, capped at 48 stars. Most of the sky is still; a field
+where every point moves reads as noise, where a few do it reads as air. The rest are baked into the
+frame and cost the encode nothing at all, which is what lets the field be large and the motion
+small.
+
+Five steps come out of **two** filters per star. The two `enable=` windows are nested — the floor
+sits inside the dip and comes later in the chain, so it wins where both are on. And a star needs one
+filter per level rather than the beacons' two, because a star is the same colour on both sides of the
+playhead: the sliding mask passes over it invisibly, which also keeps the skyline the only thing that
+reads as progress.
+
+The full erase paints **one pixel wider** than the star. A star does not end at its own rectangle —
+the supersampled block is downsampled with LANCZOS, whose negative lobes leave a ring about 5% of the
+star's amplitude just outside it, and erasing only the rectangle would leave that ring as a faint
+ghost square at exactly the moment the star is meant to be gone. A partial fade stays on the
+rectangle, or a star would appear to swell as it dims.
+
+A twinkling star is only given filters where the frame is **bare sky** underneath it. A `drawbox`
+does not know what is under it, so an occluded twinkler would flash a bright square on top of a tower
+or a letter — the one thing a background layer must never do, and now also the thing that would make
+an erase paint sky over a building. Visibility is read off the composed frame rather than worked out
+geometrically: a star can be behind a tower, inside a glyph, or cut out by the near layer's own sky
+gap, and reproducing all three in closed form would be a second implementation of the drawing that
+could only drift from the first. On a typical city frame 28 of 40 twinklers survive that test.
+
+Measured at 2560×1440, interleaved against a starless control: **+1.4%**, about 20 seconds on the 20
+minutes a three-hour render already takes, and +2.4% on file size. Most of that is the extra detail
+baked into the frame rather than the filters — a `drawbox` with a timeline expression costs about a
+microsecond per frame, and the cost stays linear to roughly 240 of them before it turns sharply
+worse.
+
+A thumbnail is a still, so it draws the whole field at full tone — the same thing both video layers
+bake. `--no-twinkle` holds them steady in the video too.
+
+```
+py lss_studio\lss_render.py recording.flac --style city --colors Night --stars ...
+py lss_studio\lss_render.py recording.flac --style mountains_forest --colors Mist --stars ...
+py lss_studio\lss_render.py recording.flac --stars --no-twinkle ...
+```
+
+> The filter graph now goes to ffmpeg in a **file** rather than on the command line. Windows caps a
+> command line at 32767 characters and fails outright past it — at launch, with nothing rendered —
+> and a `drawbox` costs about 91 of those. Seven beacons never came close; a sky's worth of twinklers
+> runs to ten thousand. What it encodes is byte-identical, verified by SHA against the inline form.
+
 ## Colours
 
 Pick a **Colours** preset to set the time of day. Each one sets the sky, the silhouette, and the
@@ -517,6 +627,24 @@ folder is never overwritten — a repeat render becomes `..._2`.
 `py lss_studio\lss_render.py --help` lists every flag, grouped as **slate**, **look**, **shape**
 and **output** — the same four groups the window uses.
 
+### What changed in 1.8.0
+
+A **star field**, off by default — `--stars`, or **Star field behind the silhouette** in the window.
+See [Stars](#stars). New `--no-twinkle` holds it steady in the video.
+
+It is a background layer rather than silhouette geometry, so it works with every style, and the
+silhouette occludes it. Only the night palettes carry one, and each names which of its own colours
+the stars take rather than adding a fourth: near-white on the dark skies, the accent on Mist, and an
+error on Morning and Evening.
+
+Stars run on their own random stream, salted off the same envelope seed, so **turning them on cannot
+move a single building.** With stars off, every style renders byte-for-byte what it rendered in
+1.7.1, verified by SHA across 90 style, palette and playback-state combinations.
+
+One thing changed for renders that have no stars in them at all: the ffmpeg filter graph now goes in
+a file rather than on the command line, because Windows caps a command line at 32767 characters and
+fails outright past it. What it encodes is byte-identical, verified by SHA against the inline form.
+
 ### What changed in 1.7.1
 
 `--style city` only, and only its tones. No flags, no defaults, no geometry.
@@ -620,6 +748,7 @@ lss_studio/
   lss_presets.json           YOUR presets (edit freely)
   lss_update.py              self-update
   VERSION                    current version
+tools/                       development scripts, not part of the app
 ```
 
 See `RELEASING.md` for how to publish an update.

@@ -371,6 +371,65 @@ def _pane(dr, p, k, c, bg, lit, filled):
     dr.rectangle([x0 * k * SS, y0 * k * SS, x1 * k * SS, y1 * k * SS], fill=f)
 
 
+def star_rect(s, k, ss=1):
+    """One star as a whole-pixel square in final-image coordinates.
+
+    Whole pixels for the same reason MAST_W is a rectangle rather than a
+    stroke: in the video a twinkling star is faded by a drawbox, and a drawbox
+    lands on integer pixels whatever the geometry underneath does. Rounding
+    both to the same grid here is what makes the filter cover exactly the
+    square that was baked, rather than a hard box inside a soft dot.
+    """
+    n = max(1, int(round(s["size"] * k)))
+    x0 = int(round(s["cx"] * k - n / 2.0))
+    y0 = int(round(s["cy"] * k - n / 2.0))
+    return x0 * ss, y0 * ss, n * ss
+
+
+def star_tone(col, bg, t):
+    """A star's colour at one distance from the sky.
+
+    Shared with the video's filter builder, so a baked star and the drawbox
+    that fades it are mixed by the identical rule rather than two copies of it.
+    """
+    return mix(col, bg, _depth(t, col, bg))
+
+
+def star_fade(col, bg, t, f):
+    """A star's own tone taken back toward the sky by f, where 1.0 is gone.
+
+    Blended from the drawn tone rather than by pushing t further, so f is the
+    same fraction of the same visible distance in every palette. Going through
+    t instead would run into _depth, which deliberately holds a low-contrast
+    star off the sky - the exact thing a fade needs to be able to overrule.
+    """
+    return mix(star_tone(col, bg, t), bg, f)
+
+
+def draw_sky(dr, sky, W, H, col, bg):
+    """The star field, behind everything.
+
+    Drawn first, so the silhouette occludes it at no cost: every shape in
+    draw_scene fills opaque before it strokes, which is the same trick that
+    lets an outlined mountain hide the range behind it.
+
+    Stars are the SAME colour in both playback layers - they never take the
+    state colour. Two reasons, and the second one pays for the feature: the
+    skyline is what reads as progress and a sky sweeping alongside it competes,
+    and identical layers mean the sliding mask passes over a star invisibly, so
+    ONE drawbox covers both sides of the playhead where a beacon needs two.
+
+    Every star is drawn at its own tone, twinkling or not - a still and both
+    video layers alike. The filters only ever take a star DOWN from here, so a
+    frame of the video can never hold a thinner field than its own thumbnail.
+    """
+    k = W / 1280.0
+    for s in sky.get("stars", []):
+        x0, y0, n = star_rect(s, k, SS)
+        dr.rectangle([x0, y0, x0 + n - 1, y0 + n - 1],
+                     fill=star_tone(col, bg, s["tone"]))
+
+
 def draw_scene(dr, sc, W, H, col, bg, played=False, face="outline",
                ahead="outline", filled=False, bands=None, lit=None,
                lights_on=True):

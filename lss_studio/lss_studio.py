@@ -197,6 +197,24 @@ class App:
                        "always shows them lit", variable=self.blink)
         self.blinkbox.grid(row=lr, column=1, sticky="w", pady=4)
         lr += 1
+        # A sky rather than a silhouette, so it is greyed by the COLOURS
+        # chosen, not by the style - every style can carry one, but only a
+        # night palette can. Remembered separately from the box for the reason
+        # the fill is: switching to Morning and back has to put the choice
+        # back rather than silently losing it.
+        self.stars = tk.BooleanVar(value=False)
+        self._stars_want = False
+        self.starsbox = ttk.Checkbutton(
+            look, text="Star field behind the silhouette — night palettes only",
+            variable=self.stars, command=self._stars_clicked)
+        self.starsbox.grid(row=lr, column=1, sticky="w", pady=4)
+        lr += 1
+        self.twinkle = tk.BooleanVar(value=True)
+        self.twinklebox = ttk.Checkbutton(
+            look, text="Let the stars twinkle — video only, a thumbnail is "
+                       "always a still", variable=self.twinkle)
+        self.twinklebox.grid(row=lr, column=1, sticky="w", pady=(0, 4))
+        lr += 1
         # On by default, and remembered separately from the box: a silhouette
         # that defines its own fill clears the box, and switching back to one
         # that does not has to put the choice back rather than silently
@@ -214,6 +232,10 @@ class App:
         cr = 0
         self.theme = self._combo(colour, cr, "Occasion", tn, tn[0]); cr += 1
         self.colors = self._combo(colour, cr, "Colours", cn, cn[0]); cr += 1
+        # the stars box lives on the Look tab but answers to this, so it is
+        # wired here - where the combo it depends on finally exists
+        self.colors.bind("<<ComboboxSelected>>", self._colors_changed)
+        self._colors_changed()
         ttk.Label(colour, text="Sets the sky. The occasion keeps its own accent.",
                   foreground=MUTED).grid(row=cr, column=1, sticky="w", pady=(0, 6))
         cr += 1
@@ -384,6 +406,24 @@ class App:
     def _filled_clicked(self):
         """Remember the choice, so greying the box out does not lose it."""
         self._filled_want = bool(self.filled.get())
+
+    def _stars_clicked(self):
+        """Remember the choice, so greying the box out does not lose it."""
+        self._stars_want = bool(self.stars.get())
+        self._colors_changed()          # the twinkle box follows this one
+
+    def _colors_changed(self, _evt=None):
+        """Grey the star field out on a palette that cannot carry one.
+
+        The window refuses the combination the validator would refuse, rather
+        than letting it be ticked and rejected at Render - the same bargain
+        _style_changed makes for the fill.
+        """
+        ok = bool(lss_presets.star_role(self.colors.get(), PRESETS))
+        self.starsbox.config(state="normal" if ok else "disabled")
+        self.stars.set(self._stars_want if ok else False)
+        self.twinklebox.config(
+            state="normal" if ok and self.stars.get() else "disabled")
 
     def _style_changed(self, _evt=None):
         """Grey out a treatment the chosen silhouette never reaches - blocks
@@ -679,6 +719,8 @@ class App:
             "detail": self.detail.get(),
             "tree_ahead": self.ahead.get(), "mountain_face": self.face.get(),
             "no_blink": not bool(self.blink.get()),
+            "stars": bool(self.stars.get()),
+            "no_twinkle": not bool(self.twinkle.get()),
             "progress": frac,
             "cycle": cyc, "cycle_minutes": cmin,
             "towers": self.towers.get(), "dynamics": self.dyn.get(),

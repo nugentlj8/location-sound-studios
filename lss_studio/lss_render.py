@@ -222,6 +222,12 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
     filled = bool(cfg.get("filled", False))
     img, dr = D.new_canvas(W, H, bg)
 
+    # the sky goes down before anything else, so every silhouette below
+    # occludes it simply by being drawn - see lss_draw.draw_sky
+    sky = cfg.get("_sky")
+    if sky:
+        D.draw_sky(dr, sky, W, H, cfg.get("star_color") or fg, bg)
+
     bands = cfg.get("_bands") if line_col == "__cycle__" else None
     sc = cfg.get("_scene")
     if sc:
@@ -486,10 +492,22 @@ def video_layers(cfg, lv, W, H, d, dur=0):
     cfg = dict(cfg, _bands=bands)
     fg = cfg.get("foreground") or BONE
     steady = bool(cfg.get("no_blink"))
+    # The stars take the OPPOSITE bargain to the beacons: both layers bake the
+    # full field, exactly as the thumbnail draws it, and star_layers() fades
+    # individual stars back toward the sky. A beacon cannot be erased - the
+    # colour under it varies - where a star stands on bare sky and can.
+    drift = bool(cfg.get("_sky")) and not cfg.get("no_twinkle")
     for name, col in (("bone", fg), ("clay", "__cycle__" if bands else cfg["accent"])):
         paths[name] = compose(cfg, lv, W, H, col, os.path.join(d, f"_{name}.png"),
                               played=(name == "clay"), lights_on=steady)
     paths["mhard"] = D.solid_mask(W, H, os.path.join(d, "_mhard.png"))
+    if drift:
+        # The occlusion reference: this same frame with no sky in it at all. A
+        # twinkler only earns its filters where THIS is still bare background.
+        # One extra compose against an encode measured in minutes, and it is
+        # the only test that cannot be fooled - see _visible_stars.
+        paths["probe"] = compose(dict(cfg, _sky=None), lv, W, H, fg,
+                                 os.path.join(d, "_probe.png"))
     return paths
 
 
@@ -527,6 +545,128 @@ def blink_layers(cfg, W, H, dur):
     return "," + ",".join(out)
 
 
+STAR_CLEAR = 0                   # how far, summed over three channels, a probe
+                                 # pixel may sit from bare sky and still count
+                                 # as clear - i.e. not at all. Flat sky
+                                 # downsamples to exactly the sky colour, so an
+                                 # open rect measures 0 and anything touching a
+                                 # roofline or a glyph's antialiasing does not.
+                                 # Slack was tried and is not worth having: it
+                                 # buys back one twinkler in thirty and turns a
+                                 # rule that can be stated exactly - a
+                                 # twinkling star stands on bare sky - into one
+                                 # with a number in it that has to be defended
+STAR_PAD = 1                     # ...and this much margin around it, because a
+                                 # star does not end at its own rectangle. The
+                                 # supersampled block is downsampled with
+                                 # LANCZOS, whose negative lobes leave a ring
+                                 # about 5% of the star's amplitude just
+                                 # outside it - measured at 8 levels a channel
+                                 # against a 164-level star. Erasing only the
+                                 # rectangle would leave that ring behind as a
+                                 # faint ghost square at exactly the moment the
+                                 # star is meant to be gone, so the erase
+                                 # covers the margin too and the probe has to
+                                 # clear it as well
+
+
+def _visible_stars(stars, path, k, bg):
+    """The twinklers the silhouette actually leaves showing.
+
+    A drawbox does not know what is under it. An occluded twinkler would flash
+    a bright square on top of a tower, a treeline or a letter of the slate -
+    the one thing a BACKGROUND layer must never do - because the filter paints
+    the frame long after the geometry that covered the star was drawn.
+
+    `path` is this same frame composed with NO sky in it, so a rect is clear
+    exactly when it is still bare background there. Two things make that the
+    right reference. Reproducing the test in closed form would be a second
+    implementation of draw_scene - a star can be behind a tower, inside a
+    glyph, or cut out by the near layer's own sky gap - and it could only drift
+    from the first. And probing the frame that HAS the stars in it cannot
+    answer it at all: a tower's body tone can land within a few units of a
+    faint star's, and then a covered star and a clear one look identical.
+
+    Every pixel of the rect must be clear, not its average. A star a roofline
+    clips would otherwise pass on the mean and flash half a square on the edge,
+    which is the same fault as flashing a whole one.
+    """
+    try:
+        img = np.array(Image.open(path).convert("RGB")).astype(np.int32)
+    except Exception:
+        # unreadable: draw no filters at all. A still sky is a small loss; a
+        # square blinking on a building is the defect this exists to prevent
+        return []
+    want = np.asarray(D.rgb(bg), dtype=np.int32)
+    h, w = img.shape[:2]
+    out = []
+    for s in stars:
+        x, y, n = D.star_rect(s, k)
+        if (x - STAR_PAD < 0 or y - STAR_PAD < 0
+                or x + n + STAR_PAD > w or y + n + STAR_PAD > h):
+            continue                     # a star off the edge of the frame
+        p = STAR_PAD
+        patch = np.abs(img[y - p:y + n + p, x - p:x + n + p] - want).sum(axis=2)
+        if int(patch.max()) <= STAR_CLEAR:
+            out.append(s)
+    return out
+
+
+def star_layers(cfg, W, H, dur, base=None):
+    """drawbox filters that fade a twinkling star, as a filter string.
+
+    ONE pair per star, where a beacon needs a pair per state: a star is the
+    same colour either side of the playhead, so a single filter covers the
+    whole frame instead of one for the played half and one for the unplayed.
+    That halving is what pays for a star field costing what seven beacons do.
+
+    The filters take a star DOWN from the tone baked into both layers, as far
+    as the sky itself - which is only possible because a star stands on bare
+    sky and the sky is one constant colour everywhere. See STAR_FADE.
+
+    The two windows are NESTED - the floor sits inside the dip and comes second
+    in the chain, so it wins where both are on. One period therefore reads
+    tone -> part -> gone -> part -> tone off two filters, which is a fade
+    rather than the on/off a single drawbox gives.
+
+    Measured at 2560x1440: about 1us per filter per frame, linear to ~240. At
+    the STAR_TWINKLE_MAX cap that is ~11s on the ~20min a three-hour render
+    already takes.
+    """
+    sky = cfg.get("_sky") or {}
+    stars = [s for s in sky.get("stars", []) if s.get("twinkle")]
+    if not stars or not dur or cfg.get("no_twinkle"):
+        return ""
+    k = W / 1280.0
+    col = cfg.get("star_color") or cfg.get("foreground") or BONE
+    bg = cfg.get("background") or INK
+    if base:
+        stars = _visible_stars(stars, base, k, bg)
+        sky["twinkling_drawn"] = len(stars)          # what the sidecar reports
+    fade = float(cfg.get("star_fade", scene_mod.STAR_FADE))
+    out = []
+    for s in stars:
+        x, y, n = D.star_rect(s, k)
+        p, ph = s["period"], s["phase"]
+        dip = p * scene_mod.STAR_DIP
+        half = dip * scene_mod.STAR_DIP_FLOOR / 2.0
+        m = f"mod(t+{ph:.3f}\\,{p:.3f})"
+        for f, on in ((fade * scene_mod.STAR_FADE_MID, f"lt({m}\\,{dip:.3f})"),
+                      (fade, f"between({m}\\,{dip / 2.0 - half:.3f}"
+                              f"\\,{dip / 2.0 + half:.3f})")):
+            c = D.star_fade(col, bg, s["tone"], f)
+            # Only a paint that IS the sky may spread past the star's own
+            # rectangle, and it has to: that is the one level where the LANCZOS
+            # ring outside it would otherwise survive as a ghost. A partial
+            # fade stays on the rectangle, or a star would appear to swell as
+            # it dims - at these sizes a one-pixel margin is most of its width.
+            p = STAR_PAD if tuple(c) == D.rgb(bg) else 0
+            out.append(f"drawbox=x={x - p}:y={y - p}:w={n + 2 * p}:h={n + 2 * p}"
+                       f":color=0x{c[0]:02X}{c[1]:02X}{c[2]:02X}"
+                       f":t=fill:enable='{on}'")
+    return "," + ",".join(out)
+
+
 def epoch_for(datestr, timestr):
     dt = datetime.datetime.strptime(f"{datestr} {timestr}", "%Y-%m-%d %I:%M %p")
     return calendar.timegm(dt.timetuple())
@@ -546,14 +686,25 @@ def build_video(cfg, paths, audio, dur, W, H, out, fps=10, crf=None,
         f"[0:v][clayA]overlay=0:0[s1];"
         f"[s1]drawtext=fontfile='{fp}':fontsize={clock_size}:fontcolor={cfg['accent'][1:]}"
         f":x=(w-tw-{rm}):y={cy}:text='%{{pts\\:gmtime\\:{ep}\\:%I\\\\\\:%M %p}}'"
-        + blink_layers(cfg, W, H, dur) + "[v]"
+        + blink_layers(cfg, W, H, dur)
+        + star_layers(cfg, W, H, dur, base=paths.get("probe")) + "[v]"
     )
+    # The graph goes in a FILE, not on the command line. Windows caps a command
+    # line at 32767 characters and ffmpeg fails outright past it - WinError 206,
+    # at launch, with nothing rendered - and a drawbox costs about 91 of those
+    # characters. Seven beacons never came close; a sky's worth of twinklers
+    # runs to ten thousand and would leave a real ceiling a few hundred stars
+    # away. Reading the graph from a file has no limit and is byte-identical in
+    # what it encodes, verified by SHA against the inline form.
+    fpath = os.path.join(os.path.dirname(paths["bone"]), "_filters.txt")
+    with open(fpath, "w", encoding="utf-8") as fh:
+        fh.write(fc)
     cmd = ["ffmpeg", "-y", "-v", "error",
            "-loop", "1", "-framerate", str(fps), "-i", paths["bone"],
            "-loop", "1", "-framerate", str(fps), "-i", paths["clay"],
            "-i", audio,
            "-loop", "1", "-framerate", str(fps), "-i", paths["mhard"],
-           "-filter_complex", fc, "-map", "[v]", "-map", "2:a",
+           "-filter_complex_script", fpath, "-map", "[v]", "-map", "2:a",
            "-c:v", "libx264", "-preset", cfg.get("x264_preset", "slow"),
            "-crf", str(crf if crf is not None else cfg.get("crf", 16)),
            "-pix_fmt", "yuv444p" if cfg.get("full_chroma") else "yuv420p",
@@ -625,6 +776,17 @@ def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None):
             "antennas": len((cfg.get("_scene") or {}).get("lights") or []),
             "foreground_shapes": len((cfg.get("_scene") or {}).get("fore") or []),
             "blink": not cfg.get("no_blink", False),
+            "stars": bool(cfg.get("stars")),
+            "star_count": len((cfg.get("_sky") or {}).get("stars") or []),
+            "star_twinklers": (cfg.get("_sky") or {}).get("twinklers", 0),
+            # ...and how many of those the silhouette left showing, so actually
+            # got filters. The gap between the two is stars behind buildings
+            "star_twinklers_drawn": (cfg.get("_sky") or {}).get(
+                "twinkling_drawn", 0),
+            "star_color": cfg.get("star_color", ""),
+            "star_seed": (f"{cfg['_sky']['seed']:016x}"
+                          if cfg.get("_sky") else ""),
+            "twinkle": not cfg.get("no_twinkle", False),
             "towers": cfg.get("towers", "Default"),
             "tower_count": n,
             "geometry": cfg.get("geometry", "steps"),
@@ -669,6 +831,25 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     cfg["background"] = cfg.get("background") or INK
     cfg["foreground"] = (cfg.get("foreground")
                          or presets_mod.auto_foreground(cfg["background"]))
+    # ...and the sky's own colour with them, from whichever of the three the
+    # palette names. An error rather than a silent no-op, for the reason
+    # scene_mod.check() gives: the alternative is finding out after the encode.
+    if cfg.get("stars"):
+        P = presets_mod.load()
+        key = cfg.get("color_preset") or "None (series colour)"
+        cfg["star_color"] = presets_mod.star_color(
+            key, P, cfg["foreground"], cfg["accent"], cfg["background"])
+        if not cfg["star_color"]:
+            raise SystemExit(
+                f"--stars: the {key} palette has no star field. Its sky is too "
+                "bright to carry one. Choose from: "
+                + ", ".join(presets_mod.star_presets(P)))
+        for v in cfg.get("variants") or []:
+            if not presets_mod.star_role(v["name"], P):
+                raise SystemExit(
+                    f"--stars: the {v['name']} palette in --variants has no "
+                    "star field. Choose from: "
+                    + ", ".join(presets_mod.star_presets(P)))
     # degrade an unmounted network path here rather than in the GUI, so the CLI
     # stays usable off the studio's network too instead of dying in makedirs
     base = usable(cfg["outdir"], "LSS Renders")
@@ -726,6 +907,20 @@ def run(cfg, progress=lambda s: None, on_progress=None):
                  f"{len(fore)} in front "
                  f"(seed {s['seed']:016x})")
 
+    # The sky, if it was asked for. Built for EVERY style, not only the
+    # silhouettes: it is a background layer rather than silhouette geometry, so
+    # blocks and topo get one too. The slate boxes go in because that is where
+    # a sun or moon will later stand - see lss_scene.sky().
+    if cfg.get("stars"):
+        cfg["_sky"] = scene_mod.sky(db, detail=cfg.get("detail", "Default"),
+                                    boxes=slate_boxes(cfg),
+                                    twinkle=not cfg.get("no_twinkle"))
+        sk = cfg["_sky"]
+        # the filter count is not known yet: a twinkler the silhouette covers
+        # gets none, and which ones those are is read off the composed layer
+        progress(f"Sky: {len(sk['stars'])} stars, {sk['twinklers']} twinkling, "
+                 f"in {cfg['star_color']} (seed {sk['seed']:016x})")
+
     tw = int(cfg.get("thumb_width", 1920))
     th = round(tw * 9 / 16)
     # a thumbnail shows the finished, fully-played frame unless asked otherwise
@@ -742,6 +937,12 @@ def run(cfg, progress=lambda s: None, on_progress=None):
         for i, v in enumerate(variants, 1):
             vcfg = dict(cfg, background=v["background"],
                         foreground=v["foreground"], accent=v["accent"])
+            if cfg.get("stars"):
+                # each palette names its own star role, so a variant set
+                # compares the sky along with everything else
+                vcfg["star_color"] = presets_mod.star_color(
+                    v["name"], presets_mod.load(), v["foreground"],
+                    v["accent"], v["background"])
             v["file"] = _thumbnail(vcfg, lv, tw, th,
                                    os.path.join(outdir, variant_filename(slug, v)),
                                    work, frac)
@@ -859,6 +1060,17 @@ def main():
                    help="leave the antenna beacons steady instead of blinking "
                         "them (--style city only). Video only - a thumbnail "
                         "always shows them lit")
+    g.add_argument("--stars", action="store_true",
+                   help="a star field behind the silhouette, which occludes "
+                        "it. Off by default. Only on the night palettes - "
+                        "each says which of its own colours the stars take, "
+                        "so they are near-white on the dark skies and the "
+                        "accent on Mist. Works with every --style")
+    g.add_argument("--no-twinkle", action="store_true",
+                   help="hold the stars steady instead of letting them fade "
+                        "out and return (--stars only). Video only, and it "
+                        "only removes motion - a thumbnail is always a still, "
+                        "and the field is the same either way")
     g.add_argument("--filled", action="store_true",
                    help="solid silhouette instead of outlines")
     g.add_argument("--slate-mono", action="store_true",
@@ -919,6 +1131,7 @@ def main():
                               for v in scene_mod.SCENE_STYLES[sc]))
         print("themes:", ", ".join(presets_mod.theme_names(P)))
         print("colors:", ", ".join(presets_mod.color_preset_names(P)))
+        print("stars:", ", ".join(presets_mod.star_presets(P)))
         print("detail:", ", ".join(scene_mod.DETAIL) + ", or a number")
         return
     missing = [k for k in ("audio","place","city","conditions","date","start")

@@ -368,6 +368,104 @@ BLINK_ON = 2.0                   # seconds lit out of each period, i.e. lit
                                  # keeps the video close to its own thumbnail
 
 
+# --- the sky ---------------------------------------------------------------
+# A star field behind everything, drawn first so every silhouette occludes it
+# for free. It is not silhouette geometry and carries no audio: only the seed
+# reaches it, so a loud recording and a quiet one get the same sky and the
+# skyline in front stays the only thing that answers to the sound.
+#
+# Built on its own RNG stream, salted off the same envelope seed, so turning
+# stars on cannot move a single building. That is what makes the byte-identity
+# guarantee hold in both directions rather than only with the feature off.
+STAR_SALT = 0x57A125             # ...this, xored into the envelope seed
+STAR_TOP = 8.0                   # stars run the WHOLE sky, text included -
+STAR_BASE = GROUND               # ...down to the ground line the trees stand
+                                 # on. Derived from GROUND rather than repeating
+                                 # 690, the same way MTN_BASE is: below it every
+                                 # style has ground, and a star under the
+                                 # buildings' feet reads as a fault. The 30-unit
+                                 # strip beneath is why this is not simply DH.
+STAR_N = 170                     # stars at Default detail. Nearly free: they
+                                 # are baked into the two layer PNGs and cost
+                                 # the encode nothing at all - only the
+                                 # TWINKLERS below cost anything, which is what
+                                 # lets the field be large and the motion small.
+STAR_SIZE = (1.10, 3.40)         # design units, so 2-6px at the sizes actually
+                                 # rendered. Whole pixels at draw time - see
+                                 # lss_draw.star_rect
+STAR_GAMMA = 2.6                 # most stars small, a few large. A flat draw
+                                 # gives a field of identical dots, which reads
+                                 # as a texture rather than as a sky
+STAR_DIM = (0.30, 0.72)          # distance toward the sky, brightest to
+                                 # faintest, on the same measure every face in
+                                 # lss_draw uses. The faint end is deliberately
+                                 # near the sky: a star at the edge of visible
+                                 # is what gives the field depth, and the ones
+                                 # that read are the few at 0.30.
+
+# Twinkle, for the video only - and the whole encode budget lives here.
+# Measured at 2560x1440: a drawbox with an enable= expression costs about 1us
+# per filter per frame, linear to ~240 filters. Two filters per twinkler at the
+# cap below is 96, i.e. ~11s added to the ~18min a three-hour render already
+# takes, about 1%. The cap is a hard bound rather than a target because
+# --detail scales STAR_N: a Fine sky gets more stars, never more filters.
+STAR_TWINKLE_F = 0.28            # chance a star twinkles at all. Most of the
+                                 # sky is still; a field where every point moves
+                                 # reads as noise, where a few do reads as air
+STAR_TWINKLE_MAX = 48            # ...but never more than this many, brightest
+                                 # first, exactly as ANT_MAX bounds the beacons
+STAR_TWINKLE_MIN = 0.25          # and never one this far toward the sky - a
+                                 # filter spent on an invisible dot is a filter
+                                 # wasted out of a budget that is the whole
+                                 # constraint on the feature
+STAR_PERIOD = (9.0, 17.0)        # seconds, per star: 3.5-6.7 excursions a
+                                 # minute against the beacons' 13-20. A beacon
+                                 # is a light that BLINKS and wants to be
+                                 # noticed; a star fades and must not be.
+STAR_LEVELS = (0.62,)            # the star's drawn tone, as a fraction of its
+                                 # own distance from the sky. Every star is
+                                 # drawn here - in a still, and baked into both
+                                 # video layers - so a twinkler and its
+                                 # neighbours are the same brightness and the
+                                 # field never looks thinner than the thumbnail.
+
+# A twinkle FADES a star toward the sky and brings it back; it does not
+# brighten one. That is the way round it has to be, and the reason is what the
+# filters can do rather than a preference.
+#
+# A drawbox paints any colour, including the sky's - the "only ever add" rule
+# the beacons follow is not a property of drawbox, it is a property of a BEACON,
+# which sits on a building whose colour differs either side of the playhead and
+# varies along the frame under a cycle, so there is no one colour that erases
+# it. A star has none of that: it stands on bare sky, guaranteed exactly by
+# _visible_stars, and the sky is the same constant in both layers and every
+# frame. So painting the sky over a star erases it perfectly.
+#
+# Which means the baked level is free to be the star's FULL brightness and the
+# filters can carry the whole visible swing. Built the other way first - baked
+# faint, filters brightening - and it was barely perceptible: the floor could
+# not go below the baked level, so the swing was under 2x and read as a pulse
+# rather than as a star appearing.
+STAR_FADE = 1.00                 # the bottom of a fade, as a blend from the
+                                 # star's own tone toward the sky. 1.0 is gone
+                                 # entirely - a star that disappears and returns
+                                 # is far more noticeable than one that dims
+STAR_FADE_MID = 0.55             # the step on the way down, as a fraction of
+                                 # that. Nested inside the window below and
+                                 # drawn FIRST, so the deeper level wins where
+                                 # both are on - which is how two filters make
+                                 # five steps, tone -> part -> gone -> part ->
+                                 # tone, rather than one on/off blink
+STAR_DIP = 0.40                  # fraction of the period spent below the star's
+                                 # own tone, so it is present for most of its
+                                 # cycle and away for a stretch of it
+STAR_DIP_FLOOR = 0.42            # ...and this fraction of the dip at the very
+                                 # bottom, centred inside it. At the periods
+                                 # above no step is shorter than about 1.5s,
+                                 # which is what makes it read as a fade rather
+                                 # than a flicker
+
+
 # --- how high the silhouette may rise, per column --------------------------
 # A single ceiling makes every column pay the WORST column's price, and the
 # slate is not a solid bar: it is text down the left, a clock on the right and
@@ -1188,6 +1286,100 @@ def _fore(detail, rng):
                         "shade": _clip_poly_left(
                             poly, min(xs) + (max(xs) - min(xs)) * FORE_TREE_SIDE_F)})
     return out
+
+
+# ----------------------------------------------------------------- sky
+def _stars(rng, n, twinkle=True):
+    """A field of stars on a jittered grid, most faint and small, a few not.
+
+    A grid rather than n independent draws, for the reason the treeline is
+    evenly spaced and then jittered: uniform random over an area clumps, and a
+    clump in a star field reads as a mistake rather than as a cluster. One star
+    per cell, a few cells skipped and a few doubled, gives even coverage that
+    is nowhere regular.
+    """
+    h = STAR_BASE - STAR_TOP
+    cell = math.sqrt(DW * h / max(1, n))
+    cols, rows_ = max(1, int(round(DW / cell))), max(1, int(round(h / cell)))
+    cw, ch = DW / cols, h / rows_
+    out = []
+    for r in range(rows_):
+        for c in range(cols):
+            # a skipped cell and a doubled one are the same device: they break
+            # the grid up. Without them the field reads as a lattice at exactly
+            # the moment the eye stops looking for individual stars.
+            if rng.random() < 0.10:
+                continue
+            for _ in range(2 if rng.random() < 0.08 else 1):
+                # size and brightness come off ONE draw, so a big star is a
+                # bright one - with a little slack, or the field looks graded
+                u = rng.random()
+                b = min(1.0, max(0.0, u + rng.uniform(-0.12, 0.12)))
+                out.append({
+                    "cx": (c + rng.uniform(0.08, 0.92)) * cw,
+                    "cy": STAR_TOP + (r + rng.uniform(0.08, 0.92)) * ch,
+                    "size": STAR_SIZE[0] + (STAR_SIZE[1] - STAR_SIZE[0])
+                    * u ** STAR_GAMMA,
+                    "dim": STAR_DIM[1] - (STAR_DIM[1] - STAR_DIM[0]) * b,
+                    "b": b,
+                })
+    # Who twinkles. Decided for every star so the draw does not depend on the
+    # order they are later capped in - the same move _city makes for antennas.
+    want = []
+    for s in out:
+        if s["b"] < STAR_TWINKLE_MIN:
+            rng.random()                             # keep the stream aligned
+            continue
+        if rng.random() < STAR_TWINKLE_F:
+            want.append(s)
+    want.sort(key=lambda s: -s["b"])                 # brightest first
+    for s in want[:STAR_TWINKLE_MAX] if twinkle else []:
+        s["twinkle"] = True
+        s["period"] = float(rng.uniform(*STAR_PERIOD))
+        s["phase"] = float(rng.uniform(0.0, STAR_PERIOD[1]))
+    # One tone for every star, twinkling or not, drawn in the still and baked
+    # into both video layers alike. A twinkler is only ever taken DOWN from
+    # here by the filters, so nothing in the field is dimmer than it looks in
+    # the thumbnail - see the note on STAR_FADE
+    for s in out:
+        s["tone"] = s["dim"] * STAR_LEVELS[0]
+    out.sort(key=lambda s: s["b"])                   # faintest first
+    return out
+
+
+def _body_span(boxes):
+    """The empty run between the series name and the episode number.
+
+    Nothing draws with this yet. It is measured here because that span is where
+    a sun or moon goes, and measuring it alongside the stars is what lets the
+    celestial body join this same background layer without the call site or the
+    structure moving. Both runs sit on the 150 baseline; if only one is there,
+    the number is absent and the whole right of the frame is free.
+    """
+    if not boxes:
+        return None
+    top = sorted((b for b in boxes if abs(b[2] - 150.0) < 1.0),
+                 key=lambda b: b[0])
+    if not top:
+        return None
+    left = top[0][1]
+    return (left, top[1][0] if len(top) > 1 else DW)
+
+
+def sky(db, detail="Default", boxes=None, twinkle=True):
+    """The background layer: a star field now, a sun or moon later.
+
+    Salted off the envelope seed onto its own RNG stream, so the silhouette is
+    bit-identical whether or not there are stars in front of it.
+    """
+    f = resolve_detail(detail)
+    seed = seed_from(db) ^ STAR_SALT
+    rng = np.random.default_rng(seed)
+    stars = _stars(rng, max(8, int(round(STAR_N * f))), twinkle)
+    return {"seed": seed, "stars": stars,
+            "twinklers": sum(1 for s in stars if s.get("twinkle")),
+            # the slot the next pass fills, and the room it has to fill it in
+            "body": None, "body_span": _body_span(boxes)}
 
 
 # ----------------------------------------------------------------- entry

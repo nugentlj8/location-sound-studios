@@ -31,27 +31,41 @@ FALLBACK = {
 # thumbnail size. The GUI's low-contrast warning is therefore skipped for these
 # vetted presets and kept for hand-typed colours - see lss_studio.start_render.
 # ---------------------------------------------------------------------------
+#
+# "stars" names which of that palette's OWN colours a star field is drawn in,
+# and its presence is what says the palette may have one at all - see
+# star_role(). A role name rather than a fourth colour, which keeps the
+# three-colour rule above intact: every night palette's foreground is already
+# near-white, so "foreground" IS the white default rather than an approximation
+# of it. A "#RRGGBB" here is honoured too, for a palette that wants a star
+# colour of its own.
+# ---------------------------------------------------------------------------
 COLOR_PRESETS = {
-    "None (series colour)": {},
+    "None (series colour)": {"stars": "foreground"},
     "Morning": {                                     # 2.40, 1.90, 4.56
         "background": "#D69E10", "foreground": "#FFFFFF",
         "accent": "#BC5A10", "accent2": "#9C4712",
         "note": "low warm sun on deep gold, white skyline",
+        # no stars: a white one measures 2.40 on this sky, and it is a morning
     },
     "Night": {                                       # 13.08, 4.96, 2.64
         "background": "#13232E", "foreground": "#F0E7D6",
         "accent": "#CF7A34", "accent2": "#F5C98A",
         "note": "the original look - blue hour, sodium-lamp accent",
+        "stars": "foreground",                       # 13.08
     },
     "Evening": {                                     # 4.29, 1.80, 7.72
         "background": "#CC5522", "foreground": "#FFFFFF",
         "accent": "#8C3355", "accent2": "#73203F",
         "note": "burnt sunset orange, white skyline, plum playhead",
+        # no stars: white would read here at 4.29, but this is a sunset. The
+        # restriction is about what the sky IS, not only what survives on it
     },
     "Canopy": {                                      # 9.53, 4.73, 2.02
         "background": "#1D4029", "foreground": "#F1E9D2",
         "accent": "#E2953A", "accent2": "#A8C24A",
         "note": "deep forest green, sunlight coming through the leaves",
+        "stars": "foreground",                       # 9.53
     },
     # Four more that read as outdoors without reaching for foliage green or
     # bark brown. Each still works for any scene, but they were chosen against
@@ -60,21 +74,30 @@ COLOR_PRESETS = {
         "background": "#3E5C78", "foreground": "#FFFFFF",
         "accent": "#9FD3E8", "accent2": "#6FB4D2",
         "note": "cold high air, snow silhouette, glacier-ice playhead",
+        "stars": "foreground",                       # 6.98
     },
     "Alpenglow": {                                   # 11.97, 4.92, 2.43
         "background": "#2C2148", "foreground": "#F7E2E6",
         "accent": "#E8734A", "accent2": "#B8536E",
         "note": "violet dusk with the last sun still on the peaks",
+        "stars": "foreground",                       # 11.97
     },
     "Mist": {                                        # 9.10, 4.76, 1.91
         "background": "#C6D2CE", "foreground": "#1F2E2C",
         "accent": "#2F5D5B", "accent2": "#4E7F73",
         "note": "fog off the water, dark pines standing in it",
+        # The one palette that does not take its foreground. White measures
+        # 1.55 on this sky and simply is not there; the foreground WOULD read,
+        # at 9.10, but it is also the slate text colour, so the field would
+        # speckle the letterforms in the identical ink. The accent is 4.76,
+        # clearly not the text, and reads as snow-lit night rather than as dirt
+        "stars": "accent",                           # 4.76
     },
     "Aurora": {                                      # 15.41, 9.34, 1.65
         "background": "#0C1A2B", "foreground": "#E9F2F3",
         "accent": "#3DD68C", "accent2": "#5FA8E0",
         "note": "arctic night, northern lights running the timeline",
+        "stars": "foreground",                       # 15.41
     },
 }
 
@@ -265,6 +288,39 @@ def resolve(series_key, theme_key, presets, custom=None):
 
 def color_preset(preset_key, presets):
     return (presets.get("colors") or COLOR_PRESETS).get(preset_key) or {}
+
+
+def star_role(preset_key, presets):
+    """What a palette says its stars are drawn in, or "" if it has none.
+
+    Presence IS the permission: a palette without the key cannot render a star
+    field, which is how Morning and Evening are refused. Data rather than a
+    hard-coded list, so a night sky added to lss_presets.json gets stars by
+    saying so.
+    """
+    return (color_preset(preset_key, presets).get("stars") or "").strip()
+
+
+def star_presets(presets):
+    """Every palette that allows a star field, in preset order."""
+    return [k for k, v in (presets.get("colors") or COLOR_PRESETS).items()
+            if (v or {}).get("stars")]
+
+
+def star_color(preset_key, presets, foreground, accent, background):
+    """The colour a star field is actually drawn in, or "" if not allowed.
+
+    The role is resolved against THIS render's settled colours, so a custom
+    --foreground moves the stars with it rather than leaving them on the
+    palette's original.
+    """
+    role = star_role(preset_key, presets)
+    if not role:
+        return ""
+    if valid_hex(role):                              # a palette with its own
+        return role.upper()                          # star colour, not a role
+    return {"foreground": foreground, "accent": accent,
+            "background": background}.get(role, foreground)
 
 
 def variants(preset_keys, theme_key, presets, accent, custom=None):
