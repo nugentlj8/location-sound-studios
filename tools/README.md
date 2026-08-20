@@ -8,7 +8,7 @@ test audio if it is not there.
 
 | | |
 |---|---|
-| `identity_check.py` | renders 90 style/palette/state combinations and SHAs them, to prove a change left every existing style byte-for-byte identical |
+| `identity_check.py` | renders the style/palette/state/stars matrix plus one video per style and SHAs them, to prove a change left every existing style byte-for-byte identical |
 | `stars_preview.py` | the 24-still star-field review set — both styles, both playback states, every palette that allows a field |
 | `stars_fade_options.py` | three star fade depths on one 30-second clip, so the depth can be chosen against a real encode |
 
@@ -28,3 +28,18 @@ py tools/identity_check.py compare
 The SHA files land in `renders/` rather than being committed: they depend on
 which fonts this machine has, so a checked-in baseline would be misleading
 somewhere else. Regenerate it from the old commit instead.
+
+The matrix covers both stars off and stars on — stars have been on by default
+since 1.9.0, so a run without them tests half the shipped behaviour. The video
+cases hash the **decoded frames** rather than the mp4: a container carries
+metadata that moves between runs, so hashing the file would fail on every
+rebuild and prove nothing.
+
+Stash only `lss_studio/` when taking the baseline, or the harness reverts along
+with the code it is measuring:
+
+```
+git stash push lss_studio/
+py tools/identity_check.py baseline
+git stash pop
+```
