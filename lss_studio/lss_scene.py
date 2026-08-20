@@ -12,9 +12,16 @@ way, and the seed is written to the render sidecar.
 
 import hashlib
 import math
+from typing import NamedTuple
+
 import numpy as np
 
 DW, DH = 1280.0, 720.0           # the design basis, shared with compose()
+                                 # DH is the FEATURE basis and never changes:
+                                 # a tree, a house and a window are the size
+                                 # they always were. A frame taller than 16:9
+                                 # moves the ground and the ceiling instead -
+                                 # see vlayout() at the end of this section.
 
 LO_DB, HI_DB = -60.0, -6.0       # fixed-scale window
 DYNAMICS = {"Natural": (5, 95), "More": (12, 88), "Most": (20, 80)}
@@ -487,6 +494,67 @@ CEIL_RAMP = 46.0                 # how far the ceiling takes to climb out of a
                                  # skyline that no loud moment put there.
 
 
+# --- the vertical layout, as one record ------------------------------------
+# Every constant above is a 16:9 value. A square cover is 1280x1280 design
+# units rather than 1280x720, and the difference has to land SOMEWHERE. It
+# lands here, split the only way that does not distort the drawing:
+#
+#   the ground and the ceiling MOVE          (this record)
+#   a tree, a house, a window DO NOT         (DH, above, stays 720)
+#
+# so a taller frame gets a taller city with more storeys in it - _tower_windows
+# derives its row count from the block height at a fixed pitch - rather than
+# the same city stretched. The two styles that cannot grow that way, houses and
+# forest, keep their proportions and gain sky instead.
+#
+# The slate rides the frame's middle, exactly as it always has: the "CITY .
+# CONDITIONS" baseline is at half the design height, 360 of 720 and 640 of
+# 1280. Pinning it there rather than deriving it per style is what keeps a
+# shelf of covers reading as one series - the titles sit on one line whatever
+# silhouette is under them.
+#
+# Every field is written so that at dh == DH it reduces to the constant above
+# it EXACTLY: the scales are multiplications by 1.0 and the offsets are
+# additions of 0.0, both of which are identities for any finite float. A 16:9
+# render is therefore byte-identical by construction rather than by testing -
+# and tools/identity_check.py tests it anyway.
+class VLayout(NamedTuple):
+    dh: float                    # design height for this aspect ratio
+    dy: float                    # how far the slate rides down from 16:9
+    ground: float
+    town_base: float
+    mtn_base: float
+    fore_base: float
+    star_base: float
+    mtn_top_min: float
+    mtn_top_max: float
+    city_max_h: float
+    ceil_free: float
+
+
+def vlayout(dh=DH):
+    """The vertical layout for a frame `dh` design units tall."""
+    s = dh / DH                              # exactly 1.0 at 16:9
+    grow = dh - DH                           # exactly 0.0 at 16:9
+    ground = GROUND + grow                   # the ground rides the bottom edge
+    return VLayout(
+        dh=dh, dy=dh / 2.0 - 360.0,
+        ground=ground, town_base=TOWN_BASE + grow,
+        mtn_base=ground, fore_base=ground, star_base=ground,
+        # a summit and a tower keep the FRACTION of the frame they always had,
+        # which is what stops the skyline thinning to a strip on a tall frame
+        mtn_top_min=ground - (GROUND - MTN_TOP_MIN) * s,
+        mtn_top_max=ground - (GROUND - MTN_TOP_MAX) * s,
+        city_max_h=CITY_MAX_H * s,
+        # ...and the free ceiling travels with the slate, not with the frame:
+        # it exists to keep air above the text, so it is measured from there
+        ceil_free=CEIL_FREE + (dh / 2.0 - 360.0),
+    )
+
+
+DESIGN = vlayout()               # the 16:9 layout: every constant above, as-is
+
+
 def ceiling_profile(boxes, free_y=CEIL_FREE, clear=CEIL_CLEAR, ramp=CEIL_RAMP):
     """The highest a silhouette may rise at each x, from measured text extents.
 
@@ -504,10 +572,10 @@ def ceiling_profile(boxes, free_y=CEIL_FREE, clear=CEIL_CLEAR, ramp=CEIL_RAMP):
     return xs, np.maximum(soft, hard)
 
 
-def ceil_at(prof, x):
-    """The ceiling at one x, or the flat CITY_MAX_H line when there is none."""
+def ceil_at(prof, x, L=DESIGN):
+    """The ceiling at one x, or the flat city_max_h line when there is none."""
     if prof is None:
-        return TOWN_BASE - CITY_MAX_H
+        return L.town_base - L.city_max_h
     xs, p = prof
     return float(np.interp(x, xs, p))
 
@@ -702,8 +770,11 @@ def _truncate(pts, frac):
 
 
 # ----------------------------------------------------------------- mountains
-def _mountains(db, detail, scale, dynamics, rng):
+def _mountains(db, detail, scale, dynamics, rng, L=DESIGN):
     """Summits from the envelope, flanks and faces from the summits."""
+    # the frame this build is drawing into. At 16:9 every field IS the
+    # module constant of the same name, so nothing below can tell.
+    MTN_BASE, MTN_TOP_MIN, MTN_TOP_MAX = L.mtn_base, L.mtn_top_min, L.mtn_top_max
     n = max(48, int(round(160 * detail)))
     prof = smooth(bin_peak(db, n), n / 22.0, passes=2)
     # Few and large. A steep flank needs roughly its own height in width, so
@@ -813,7 +884,7 @@ def _decid_poly(rng, x, base, h):
             + [(x - tw, yt), (x - tw, base)])
 
 
-def _trees(db, detail, scale, dynamics, rng, vary):
+def _trees(db, detail, scale, dynamics, rng, vary, L=DESIGN):
     """Even spacing, small deterministic variation, size pinned to the frame.
 
     Trees do not breathe with the recording - the mountains do - so in
@@ -821,6 +892,9 @@ def _trees(db, detail, scale, dynamics, rng, vary):
     has nothing else carrying the signal, so there `vary` lets level move the
     height by a modest amount and add a tier.
     """
+    # the frame this build is drawing into. At 16:9 every field IS the
+    # module constant of the same name, so nothing below can tell.
+    GROUND = L.ground
     spacing = TREE_SPACING / detail
     n = max(6, int(round((DW + 120.0) / spacing)))
     lvl = None
@@ -989,9 +1063,12 @@ def _clip_poly_left(poly, xc):
     return out if len(out) >= 3 else None
 
 
-def _houses(lv, detail, rng):
+def _houses(lv, detail, rng, L=DESIGN):
     """Mostly low houses, with a tall block kept for the loudest few percent so
     the skyline stays residential."""
+    # the frame this build is drawing into. At 16:9 every field IS the
+    # module constant of the same name, so nothing below can tell.
+    TOWN_BASE = L.town_base
     lv = np.asarray(lv, dtype=np.float64)
     n = max(8, int(round(HOUSE_N * detail)))
     # Regroup the block levels onto the coarser house grid, keeping each
@@ -1081,7 +1158,7 @@ def _roofline(rng, a, b, top):
             (b - inset, top - rise), (b - inset, top), (b, top)]
 
 
-def _antenna(rng, cx, roof_y, ceil_y=ANT_CEIL):
+def _antenna(rng, cx, roof_y, ceil_y=ANT_CEIL, L=DESIGN):
     """A plain needle, as (polys, light_rect), or None if there is no room.
 
     Rectangles throughout - see MAST_W. The mast runs a little way below the
@@ -1092,7 +1169,7 @@ def _antenna(rng, cx, roof_y, ceil_y=ANT_CEIL):
     carries the longest mast. The headroom clamp is only a backstop now - the
     room was reserved in proportion when the building was sized.
     """
-    h = ANT_LEN_F * (TOWN_BASE - roof_y) * rng.uniform(*ANT_LEN_JIT)
+    h = ANT_LEN_F * (L.town_base - roof_y) * rng.uniform(*ANT_LEN_JIT)
     h = min(max(h, ANT_LEN[0]), ANT_LEN[1], roof_y - ceil_y)
     if h < ANT_MIN_LEN:
         return None, None
@@ -1103,13 +1180,16 @@ def _antenna(rng, cx, roof_y, ceil_y=ANT_CEIL):
     return [mast], light
 
 
-def _city(lv, detail, rng, ceiling=None):
+def _city(lv, detail, rng, ceiling=None, L=DESIGN):
     """A downtown: one building per block, windows in a grid, a few antennas.
 
     Shares every part with the town - the same window builder at a finer pitch,
     the same left-hand shade, the same pane minimums - so the two styles differ
     in density and proportion rather than in kind.
     """
+    # the frame this build is drawing into. At 16:9 every field IS the
+    # module constant of the same name, so nothing below can tell.
+    TOWN_BASE = L.town_base
     lv = np.asarray(lv, dtype=np.float64)
     if CITY_BLOCK_W > 0:
         # Regroup onto a fixed block width, keeping each group's LOUDEST block -
@@ -1136,7 +1216,7 @@ def _city(lv, detail, rng, ceiling=None):
         # The block's own column decides how much room it HAS; the recording
         # decides how much of that room it uses. A quiet block under an empty
         # span stays quiet - only the top of the range moves.
-        cy = ceil_at(ceiling, (a + b) / 2.0)
+        cy = ceil_at(ceiling, (a + b) / 2.0, L)
         # ...and the ROOF stops a mast's length short of it. The ceiling bounds
         # the whole silhouette, antenna included, so a building that grows right
         # up to it leaves its own mast nowhere to stand - which put the beacons
@@ -1205,8 +1285,8 @@ def _city(lv, detail, rng, ceiling=None):
         span = [p for p in h["roof"] if p[1] == ry]
         cx = (span[0][0] + span[-1][0]) / 2.0 if len(span) > 1 else h["cx"]
         polys, light = _antenna(rng, cx, ry,
-                                ceil_at(ceiling, cx) if ceiling is not None
-                                else ANT_CEIL)
+                                ceil_at(ceiling, cx, L) if ceiling is not None
+                                else ANT_CEIL, L)
         if polys is None:                            # no headroom under the slate
             continue
         h["antenna"] = polys
@@ -1218,7 +1298,7 @@ def _city(lv, detail, rng, ceiling=None):
     return out, lights
 
 
-def _fore(detail, rng):
+def _fore(detail, rng, L=DESIGN):
     """The city's near layer: the same buildings, closer - shorter, wider,
     varied, and overlapping each other.
 
@@ -1232,6 +1312,9 @@ def _fore(detail, rng):
     sit nearer than the skyline's lightest, or the two layers interleave and
     stop being two layers.
     """
+    # the frame this build is drawing into. At 16:9 every field IS the
+    # module constant of the same name, so nothing below can tell.
+    FORE_BASE = L.fore_base
     # Widths first, because the heights are a PROFILE across the whole band
     # rather than a draw per building - and the profile needs to know how many
     # buildings there are. detail counts features, so it narrows them rather
@@ -1289,7 +1372,7 @@ def _fore(detail, rng):
 
 
 # ----------------------------------------------------------------- sky
-def _stars(rng, n, twinkle=True):
+def _stars(rng, n, twinkle=True, L=DESIGN):
     """A field of stars on a jittered grid, most faint and small, a few not.
 
     A grid rather than n independent draws, for the reason the treeline is
@@ -1298,7 +1381,9 @@ def _stars(rng, n, twinkle=True):
     per cell, a few cells skipped and a few doubled, gives even coverage that
     is nowhere regular.
     """
-    h = STAR_BASE - STAR_TOP
+    # the frame this build is drawing into. At 16:9 every field IS the
+    # module constant of the same name, so nothing below can tell.
+    h = L.star_base - STAR_TOP
     cell = math.sqrt(DW * h / max(1, n))
     cols, rows_ = max(1, int(round(DW / cell))), max(1, int(round(h / cell)))
     cw, ch = DW / cols, h / rows_
@@ -1358,7 +1443,10 @@ def _body_span(boxes):
     """
     if not boxes:
         return None
-    top = sorted((b for b in boxes if abs(b[2] - 150.0) < 1.0),
+    # the topmost baseline, whatever it is - the slate rides down on a frame
+    # taller than 16:9, so matching a literal 150 would find nothing there
+    top_y = min(b[2] for b in boxes)
+    top = sorted((b for b in boxes if abs(b[2] - top_y) < 1.0),
                  key=lambda b: b[0])
     if not top:
         return None
@@ -1366,16 +1454,26 @@ def _body_span(boxes):
     return (left, top[1][0] if len(top) > 1 else DW)
 
 
-def sky(db, detail="Default", boxes=None, twinkle=True):
+def sky(db, detail="Default", boxes=None, twinkle=True, dh=DH):
     """The background layer: a star field now, a sun or moon later.
 
     Salted off the envelope seed onto its own RNG stream, so the silhouette is
     bit-identical whether or not there are stars in front of it.
+
+    `dh` is the frame's design height: the field runs down to that frame's own
+    ground line, so a square cover gets stars all the way to the rooftops
+    rather than a 16:9 band of them with bare sky underneath.
     """
     f = resolve_detail(detail)
     seed = seed_from(db) ^ STAR_SALT
     rng = np.random.default_rng(seed)
-    stars = _stars(rng, max(8, int(round(STAR_N * f))), twinkle)
+    L = vlayout(dh)
+    # STAR_N is a DENSITY, not a count. The square cover's sky is 1.8x the
+    # 16:9 band, and holding the count fixed there would draw the same stars
+    # thinner - a cover that reads as a clearer night than its own thumbnail.
+    # Exactly 1.0 at 16:9: the same two numbers over each other.
+    spread = (L.star_base - STAR_TOP) / (STAR_BASE - STAR_TOP)
+    stars = _stars(rng, max(8, int(round(STAR_N * f * spread))), twinkle, L)
     return {"seed": seed, "stars": stars,
             "twinklers": sum(1 for s in stars if s.get("twinkle")),
             # the slot the next pass fills, and the room it has to fill it in
@@ -1416,29 +1514,38 @@ def check(scene, style, rows=1, filled=False, progress=0.0):
 
 
 def build(style, db, lv, detail="Default", scale="Skyline (rank)",
-          dynamics="More", ceiling=None):
-    """All the geometry one render needs, in design units."""
+          dynamics="More", ceiling=None, dh=DH):
+    """All the geometry one render needs, in design units.
+
+    `dh` is the frame's design height - 720 for the 16:9 thumbnail and video,
+    1280 for a square cover. It is the ONLY thing that differs between the two:
+    same seed, same envelope, same feature sizes, one layout apart. Which is
+    also why a cover has to be built separately rather than cropped from the
+    16:9 geometry - the shapes are the same shapes, standing on a lower ground
+    line with more room over their heads.
+    """
+    L = vlayout(dh)
     f = resolve_detail(detail)
     seed = seed_from(db)
     rng = np.random.default_rng(seed)
-    sc = {"style": style, "seed": seed, "detail": f,
+    sc = {"style": style, "seed": seed, "detail": f, "dh": dh,
           # the ground line the range stands on, so the draw can trim the flank
           # strokes to it without importing this module's layout constants
-          "mtn_base": MTN_BASE,
+          "mtn_base": L.mtn_base,
           "mountains": [], "trees": [], "houses": [], "town_trees": [],
           "fore": [], "lights": []}
     if style in ("mountains", "mountains_forest"):
-        sc["mountains"] = _mountains(db, f, scale, dynamics, rng)
+        sc["mountains"] = _mountains(db, f, scale, dynamics, rng, L)
     if style in ("forest", "mountains_forest"):
         sc["trees"] = _trees(db, f, scale, dynamics, rng,
-                             vary=(style == "forest"))
+                             vary=(style == "forest"), L=L)
     if style == "houses":
-        sc["houses"], sc["town_trees"] = _houses(lv, f, rng)
+        sc["houses"], sc["town_trees"] = _houses(lv, f, rng, L)
     if style == "city":
         # the same list the houses use: a city block and a house get the same
         # body, shade and pane treatment, so they are one thing to draw
-        sc["houses"], sc["lights"] = _city(lv, f, rng, ceiling)
+        sc["houses"], sc["lights"] = _city(lv, f, rng, ceiling, L)
         # ...and the near layer after it, so the skyline's own draws land
         # exactly where they landed before there was a foreground at all
-        sc["fore"] = _fore(f, rng)
+        sc["fore"] = _fore(f, rng, L)
     return sc

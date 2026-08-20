@@ -211,8 +211,15 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
 
     `played` selects which side of the playhead this frame represents: the
     video builds one of each and lets the sliding mask cut between them.
+
+    A frame taller than 16:9 - the square cover - keeps this same layout and
+    moves the slate down with the frame's middle. `dy` is that move, and it is
+    exactly 0.0 at 16:9, so every baseline below is the number it always was.
     """
     k = W / 1280.0
+    dh = 1280.0 * H / W              # 720.0 at 16:9, 1280.0 square
+    dy = dh / 2.0 - 360.0            # the "CITY . CONDITIONS" line rides the
+                                     # frame's middle, as it has since 360/720
     acc = cfg["accent"]
     bg = cfg.get("background") or INK
     fg = cfg.get("foreground") or BONE
@@ -266,20 +273,20 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
             break
         ssize *= 0.94
         strack *= 0.94
-    D.text_run(dr, cfg["series"], ssize, strack, M, 150 * k, fg, FONT)
+    D.text_run(dr, cfg["series"], ssize, strack, M, (150 + dy) * k, fg, FONT)
     if n:
-        D.text_run(dr, n, 27 * k, 11 * k, W - M - nw, 150 * k, slate, FONT)
+        D.text_run(dr, n, 27 * k, 11 * k, W - M - nw, (150 + dy) * k, slate, FONT)
 
-    D.text_run(dr, cfg["place"], 104 * k, 7 * k, M, 296 * k, fg, FONT)
+    D.text_run(dr, cfg["place"], 104 * k, 7 * k, M, (296 + dy) * k, fg, FONT)
     D.text_run(dr, f'{cfg["city"]}  \u00b7  {cfg["conditions"]}',
-               31 * k, 8 * k, M, 360 * k, slate, FONT)
+               31 * k, 8 * k, M, (360 + dy) * k, slate, FONT)
     if time_text:
         w = D.text_width(time_text, 31 * k, 0, FONT)
-        D.text_run(dr, time_text, 31 * k, 0, W - M - w, 360 * k, slate, FONT)
+        D.text_run(dr, time_text, 31 * k, 0, W - M - w, (360 + dy) * k, slate, FONT)
     return D.finish(img, W, H, out)
 
 
-def slate_boxes(cfg):
+def slate_boxes(cfg, dh=720.0):
     """Every run of slate text as (x0, x1, ink_bottom), in design units.
 
     Measured with the real font at the real sizes rather than estimated from a
@@ -292,7 +299,8 @@ def slate_boxes(cfg):
     at k=1; if the layout there moves, this has to move with it.
     """
     M = 84.0
-    out = []
+    dy = dh / 2.0 - 360.0            # the same slate move compose() makes, so
+    out = []                         # the ceiling is measured off the real text
     n = format_number(cfg.get("number", ""), cfg.get("number_style", "No."))
     nw = D.text_width(n, 27.0, 11.0, FONT) if n else 0.0
     # the same shrink-to-fit compose() applies, or a long series name would
@@ -304,18 +312,18 @@ def slate_boxes(cfg):
             break
         ssize *= 0.94
         strack *= 0.94
-    out.append((M, M + D.text_width(cfg["series"], ssize, strack, FONT), 150.0))
+    out.append((M, M + D.text_width(cfg["series"], ssize, strack, FONT), 150.0 + dy))
     if n:
-        out.append((1280.0 - M - nw, 1280.0 - M, 150.0))
-    out.append((M, M + D.text_width(cfg["place"], 104.0, 7.0, FONT), 296.0))
+        out.append((1280.0 - M - nw, 1280.0 - M, 150.0 + dy))
+    out.append((M, M + D.text_width(cfg["place"], 104.0, 7.0, FONT), 296.0 + dy))
     cc = f'{cfg["city"]}  ·  {cfg["conditions"]}'
-    out.append((M, M + D.text_width(cc, 31.0, 8.0, FONT), 360.0))
+    out.append((M, M + D.text_width(cc, 31.0, 8.0, FONT), 360.0 + dy))
     # The clock. Reserved whatever this render is: the thumbnail draws it and
     # the video has ffmpeg draw it in the same place, so the column is spoken
     # for either way. Measured off a full-width sample rather than this
     # render's start time, because the video's clock runs all night.
     tw = D.text_width("00:00 PM", 31.0, 0.0, FONT)
-    out.append((1280.0 - M - tw, 1280.0 - M, 360.0))
+    out.append((1280.0 - M - tw, 1280.0 - M, 360.0 + dy))
     return out
 
 
@@ -452,7 +460,7 @@ def clock_box(W, H, sample="06:30 PM"):
     from PIL import ImageFont
     k = W / 1280.0
     size = int(round(31 * k))
-    baseline = 360 * k
+    baseline = (360 + (1280.0 * H / W) / 2.0 - 360.0) * k
     f = ImageFont.truetype(FONT, size)
     ink_top = baseline + f.getbbox(sample, anchor="ls")[1]
     return {"size": size,
