@@ -331,6 +331,11 @@ class App:
         ttk.Checkbutton(act, text="Thumbnail only — skip the video encode",
                         variable=self.thumbonly).pack(side="left", padx=(16, 0))
         self.thumbonly.trace_add("write", lambda *_a: self._thumbonly_changed())
+        # Beside Thumbnail only because it answers the same question - what
+        # comes out of this render - and that row is where those live.
+        self.cover = tk.BooleanVar(value=False)
+        ttk.Checkbutton(act, text="Spotify cover — 3000×3000 square",
+                        variable=self.cover).pack(side="left", padx=(16, 0))
         ttk.Label(act, text="Preview at").pack(side="left", padx=(20, 6))
         self.preview = ttk.Entry(act, width=5)
         self.preview.insert(0, "100")
@@ -565,6 +570,9 @@ class App:
                 self.say("\nFolder    : %s" % payload.get("folder", ""))
                 for p in thumbs:
                     self.say("Thumbnail : " + os.path.basename(p))
+                if payload.get("cover"):
+                    self.say("Cover     : "
+                             + os.path.basename(payload["cover"]))
                 self.say("Video     : " + payload["video"] if payload.get("video")
                          else "(thumbnail only — no video rendered)")
             elif kind == "error":
@@ -731,6 +739,7 @@ class App:
             "align_loud": bool(self.align.get()),
             "height_stat": "peak" if self.peak.get() else "rms",
             "thumb_only": bool(self.thumbonly.get()),
+            "cover": bool(self.cover.get()),
             "slate_mono": bool(self.mono.get()),
             "outname": self.outname.get().strip(),
         }

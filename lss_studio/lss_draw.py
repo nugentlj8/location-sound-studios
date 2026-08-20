@@ -4,7 +4,7 @@ Everything is drawn at SS times the final size and downsampled with LANCZOS,
 which gives clean antialiasing on curves and text without a vector backend.
 """
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 
 SS = 2
 
@@ -98,9 +98,28 @@ def new_canvas(W, H, bg="#13232E"):
     return img, ImageDraw.Draw(img)
 
 
-def finish(img, W, H, path):
-    img.resize((W, H), Image.LANCZOS).save(path)
+def finish(img, W, H, path, **save):
+    """Downsample to the final size and write it.
+
+    `save` goes straight to Pillow, which is how the square cover gets its
+    300 dpi pHYs chunk and its sRGB marker without needing a second save path.
+    """
+    img.resize((W, H), Image.LANCZOS).save(path, **save)
     return path
+
+
+def png_meta():
+    """The PNG chunks a Spotify cover has to carry: 300 dpi and an sRGB marker.
+
+    Pillow writes dpi as pHYs in pixels per METRE, and 300 dpi lands on exactly
+    the 11811 the spec asks for rather than near it. There is no alpha to strip
+    and no profile to convert - new_canvas() only ever makes RGB, and a PNG
+    with no embedded profile is read as sRGB everywhere - so the marker is
+    saying out loud what the file already was.
+    """
+    m = PngImagePlugin.PngInfo()
+    m.add(b"sRGB", bytes([0]))                 # rendering intent 0, perceptual
+    return {"dpi": (300, 300), "pnginfo": m}
 
 
 def solid_mask(W, H, path):

@@ -64,6 +64,11 @@ self-explanatory on reading):
      A twinkler only gets filters where `_visible_stars()` finds bare sky under it, read off a
      third "probe" frame composed without the sky — an occluded star would otherwise flash a
      square on top of a building.
+  5d. `--cover` adds a 3000x3000 square PNG for Spotify. `_cover()` rebuilds
+     the geometry at `dh=1280` off the *same* envelope seed rather than
+     cropping or stretching the 16:9 frame, so it is the recording's own
+     skyline on a lower ground line with more sky over it. Always the
+     fully-played frame.
   5b. A `variants` list in cfg (from `lss_presets.variants()`, thumbnail-only) makes `run()` emit
      one thumbnail per palette instead of one. It sits *after* the envelope, levels and geometry,
      so N looks cost one audio pass and one `compose()` each — and share a silhouette exactly.
@@ -80,7 +85,13 @@ self-explanatory on reading):
   `--detail` count *features* rather than pixels. All randomness comes from a seed hashed off the
   envelope, so a recording always renders identically. `SCENE_STYLES` is the scene→style map and
   `check()` is the up-front validator both the CLI and GUI call; a bad combination is an error,
-  never a silent fallback. `sky()` is the one thing here that is **not** silhouette geometry — the
+  never a silent fallback. `vlayout(dh)` is the **vertical** layout for a frame
+  `dh` design units tall, and the split it encodes is the one rule to know
+  before changing anything here: **the ground and the ceiling move with the
+  frame; a tree, a house and a window do not.** `DH` stays 720 as the feature
+  basis. Every field reduces to the module constant of the same name at
+  `dh == 720` exactly - scales are multiplications by 1.0, offsets are
+  additions of 0.0 - which is why a square cover cannot disturb a 16:9 render. `sky()` is the one thing here that is **not** silhouette geometry — the
   star field, and the slot a sun or moon will later fill — and it runs on its own RNG stream salted
   off the same seed, so stars can never move a building.
 - **`lss_studio.py`** — the Tkinter GUI. Builds the config dict expected by `lss_render.run()` and

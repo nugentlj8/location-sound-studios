@@ -202,7 +202,7 @@ def to_levels(db, n, scale="Skyline (rank)", dynamics="More", align=True,
 # ----------------------------------------------------------------- drawing
 # ----------------------------------------------------------------- outputs
 def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
-            lights_on=True):
+            lights_on=True, save=None):
     """The single composition used for both the thumbnail and the video frames.
 
     Laid out in 1280x720 design units and scaled by k, so the video is the
@@ -283,7 +283,7 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
     if time_text:
         w = D.text_width(time_text, 31 * k, 0, FONT)
         D.text_run(dr, time_text, 31 * k, 0, W - M - w, (360 + dy) * k, slate, FONT)
-    return D.finish(img, W, H, out)
+    return D.finish(img, W, H, out, **(save or {}))
 
 
 def slate_boxes(cfg, dh=720.0):
@@ -443,6 +443,47 @@ def _thumbnail(cfg, lv, tw, th, out, work, frac=1.0):
         return D.progress_composite(b, c, frac, out)
     return compose(cfg, lv, tw, th, cfg["foreground"], out,
                    time_text=cfg["start"])
+
+
+COVER_PX = 3000                  # Spotify's ceiling. Its floor is 1400, and
+                                 # the file lands two orders of magnitude under
+                                 # the 25 MB cap either way, so there is nothing
+                                 # to trade and no size flag to offer
+COVER_DH = 1280.0                # ...which makes the design frame 1280x1280 -
+                                 # see lss_scene.vlayout for what moves
+
+
+def _cover(cfg, db, lv, style, scale, dyn, out):
+    """The square cover, built rather than cropped.
+
+    The geometry is rebuilt at the square design height from the SAME envelope
+    seed, so this is the recording's own skyline standing on a lower ground
+    line with more sky over it - not the 16:9 frame with its sides cut off, and
+    not the 16:9 frame stretched. Costs one extra build and one compose; the
+    audio pass, the envelope and the levels are all already done.
+
+    Always the finished, fully-played frame. A cover is a release's fixed
+    identity, so it shows the state the video ends in, drawn in the flat accent
+    - never a colour cycle's arbitrary last step.
+    """
+    boxes = slate_boxes(cfg, dh=COVER_DH)
+    L = scene_mod.vlayout(COVER_DH)
+    ccfg = dict(cfg)
+    if style in scene_mod.SILHOUETTE:
+        ceiling = (scene_mod.ceiling_profile(boxes, free_y=L.ceil_free)
+                   if style == "city" and cfg.get("ceiling_profile", True)
+                   else None)
+        ccfg["_scene"] = scene_mod.build(style, db, lv,
+                                         detail=cfg.get("detail", "Default"),
+                                         scale=scale, dynamics=dyn,
+                                         ceiling=ceiling, dh=COVER_DH)
+    if cfg.get("stars"):
+        ccfg["_sky"] = scene_mod.sky(db, detail=cfg.get("detail", "Default"),
+                                     boxes=boxes,
+                                     twinkle=not cfg.get("no_twinkle"),
+                                     dh=COVER_DH)
+    return compose(ccfg, lv, COVER_PX, COVER_PX, ccfg["accent"], out,
+                   time_text=cfg["start"], played=True, save=D.png_meta())
 
 
 def variant_filename(slug, v):
@@ -752,7 +793,7 @@ def build_video(cfg, paths, audio, dur, W, H, out, fps=10, crf=None,
 
 
 # ----------------------------------------------------------------- driver
-def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None):
+def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None, cover=None):
     """Everything needed to understand or reproduce a render, saved beside it."""
     import datetime
     if variants:
@@ -821,6 +862,9 @@ def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None):
             "fps": cfg.get("fps", 10),
             "full_chroma": cfg.get("full_chroma", False),
         },
+        "cover": ({"file": os.path.basename(cover), "size": COVER_PX,
+                   "design_height": COVER_DH, "dpi": 300}
+                  if cover else None),
         "variants": variants or [],
         "source_audio": os.path.basename(cfg.get("audio", "")),
         "duration_s": dur,
@@ -969,15 +1013,24 @@ def run(cfg, progress=lambda s: None, on_progress=None):
         thumbs = [_thumbnail(cfg, lv, tw, th,
                              os.path.join(outdir, f"{slug}_thumb.png"), work, frac)]
 
+    cover = None
+    if cfg.get("cover"):
+        progress("Building cover…")
+        cover = _cover(cfg, db, lv, style, scale, dyn,
+                       os.path.join(outdir, f"{slug}_cover.png"))
+        progress(f"  {os.path.basename(cover)}  "
+                 f"{COVER_PX}×{COVER_PX}, "
+                 f"{os.path.getsize(cover) / 1e6:.2f} MB")
+
     if cfg.get("thumb_only"):
-        json.dump(_sidecar(cfg, lv, dur, scale, dyn, n, variants),
+        json.dump(_sidecar(cfg, lv, dur, scale, dyn, n, variants, cover),
                   open(os.path.join(outdir, f"{slug}_render.json"), "w"), indent=2)
         shutil.rmtree(work, ignore_errors=True)
         if on_progress:
             on_progress(1.0, 0)
         progress("Done (thumbnail only).")
         return {"thumbnail": thumbs[0], "thumbnails": thumbs, "video": None,
-                "duration": dur, "folder": outdir}
+                "cover": cover, "duration": dur, "folder": outdir}
 
     W, H = cfg.get("width", 2560), cfg.get("height", 1440)
     progress("Building frame layers…")
@@ -992,12 +1045,12 @@ def run(cfg, progress=lambda s: None, on_progress=None):
                       os.path.join(outdir, f"{slug}.mp4"),
                       fps=cfg.get("fps", 10), on_progress=stage(0.18, 1.0))
 
-    json.dump(_sidecar(cfg, lv, dur, scale, dyn, n),
+    json.dump(_sidecar(cfg, lv, dur, scale, dyn, n, None, cover),
               open(os.path.join(outdir, f"{slug}_render.json"), "w"), indent=2)
     shutil.rmtree(work, ignore_errors=True)
     progress("Done.")
     return {"thumbnail": thumbs[0], "thumbnails": thumbs, "video": vid,
-            "duration": dur, "folder": outdir}
+            "cover": cover, "duration": dur, "folder": outdir}
 
 
 def main():
@@ -1124,6 +1177,12 @@ def main():
                    help="name the render folder and files. Defaults to --place")
     g.add_argument("--thumb-only", action="store_true",
                    help="render just the thumbnail - no video encode")
+    g.add_argument("--cover", action="store_true",
+                   help=f"also write a {COVER_PX}x{COVER_PX} square cover for "
+                        "Spotify, at 300 dpi. The same render laid out for 1:1 "
+                        "- more sky, the slate on the frame's middle - always "
+                        "as the finished fully-played frame. Adds about half a "
+                        "second and composes with everything else")
     g.add_argument("--progress", type=float, default=1.0,
                    help="how far through playback the thumbnail is drawn, 0-1. "
                         "Defaults to 1, the finished fully-played frame; use "
@@ -1227,6 +1286,8 @@ def main():
     print(f"\nfolder    : {r['folder']}")
     for p in r["thumbnails"]:
         print(f"thumbnail : {p}")
+    if r.get("cover"):
+        print(f"cover     : {r['cover']}")
     if r["video"]:
         print(f"video     : {r['video']}")
 
