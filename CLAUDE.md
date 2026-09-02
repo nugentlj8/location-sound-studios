@@ -69,6 +69,17 @@ self-explanatory on reading):
      cropping or stretching the 16:9 frame, so it is the recording's own
      skyline on a lower ground line with more sky over it. Always the
      fully-played frame.
+  5e. `--weather` adds clouds (and, at `rain`, static streaks in front of the
+     silhouette) from `lss_scene.weather()`. `compose()` draws them in two calls
+     that bracket `draw_scene()` — clouds after the stars so an opaque cloud
+     occludes them for free, rain after the silhouette and before the slate, so
+     the text reads as floating in front of the weather. Nothing is hand-tuned
+     per style or per palette: `lss_draw.weather_tones()` derives every colour
+     from the palette's own sky and foreground at a target *contrast ratio*, and
+     the cloud band comes from `lss_scene.horizon()` reading the built geometry.
+     Rain is deliberately kept out of the twinkle probe (`_clouds_only()`) — a
+     cloud occludes a star, a streak does not, and `STAR_CLEAR = 0` would lose a
+     twinkler to a single clipped corner.
   5b. A `variants` list in cfg (from `lss_presets.variants()`, thumbnail-only) makes `run()` emit
      one thumbnail per palette instead of one. It sits *after* the envelope, levels and geometry,
      so N looks cost one audio pass and one `compose()` each — and share a silhouette exactly.
@@ -93,7 +104,10 @@ self-explanatory on reading):
   `dh == 720` exactly - scales are multiplications by 1.0, offsets are
   additions of 0.0 - which is why a square cover cannot disturb a 16:9 render. `sky()` is the one thing here that is **not** silhouette geometry — the
   star field, and the slot a sun or moon will later fill — and it runs on its own RNG stream salted
-  off the same seed, so stars can never move a building.
+  off the same seed, so stars can never move a building. `weather()` is a third such stream,
+  on its own salt again: clouds sized as a fraction of the band `horizon()` measures, and rain
+  as a density over the frame. Nothing in it reads the loudness — the seed varies the weather
+  between recordings, the envelope decides the skyline and stops there.
 - **`lss_studio.py`** — the Tkinter GUI. Builds the config dict expected by `lss_render.run()` and
   calls it in a background thread, polling a `queue.Queue` on a Tk `after()` timer for log lines and
   progress. Not the place to add render logic — it's a thin form over `lss_render.run()`.
@@ -133,6 +147,10 @@ and every running copy of the app picks it up on its next launch via `lss_update
   are likewise derived from the preset data rather than listed by hand. A `stars` key is not a
   fourth either: it holds the *role name* of whichever of the three the star field takes
   (`star_color()`), and its presence is also what says the palette may have stars at all.
+  Weather adds no colour either: `lss_draw.weather_tones()` bisects a tone out of the sky and
+  the foreground at a target contrast ratio, so a cloud is the palette's own ink heavily washed
+  toward its own sky. The direction falls out — the foreground is on the lighter side of the sky
+  in eight presets and the darker side in Mist, so Mist's clouds darken with no special case.
 - Design coordinates are fixed at a 1280x720 basis and scaled by `k = W / 1280.0` everywhere in
   `compose()` — when adjusting layout, change the design-unit constant, not per-resolution numbers.
 - `usable()` in `lss_render.py` degrades a configured network drive path (`Z:\...`) to a folder in

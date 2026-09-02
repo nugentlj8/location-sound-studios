@@ -215,6 +215,19 @@ class App:
                        "always a still", variable=self.twinkle)
         self.twinklebox.grid(row=lr, column=1, sticky="w", pady=(0, 4))
         lr += 1
+        # Weather is a SKY setting, not a silhouette one: the band it fills is
+        # read from whatever room the chosen style happens to leave, so this
+        # never greys out and never asks which style is selected.
+        self.weather = self._combo(look, lr, "Weather",
+                                   lss_scene.WEATHER_STATES,
+                                   lss_scene.WEATHER_STATES[0])
+        lr += 1
+        ttk.Label(look, text="Clouds sit in the sky the silhouette leaves "
+                             "free; rain adds static streaks in front of it "
+                             "and implies clouds. Both take their colour from "
+                             "the palette.",
+                  foreground=MUTED).grid(row=lr, column=1, sticky="w", pady=(0, 6))
+        lr += 1
         # On by default, and remembered separately from the box: a silhouette
         # that defines its own fill clears the box, and switching back to one
         # that does not has to put the choice back rather than silently
@@ -727,6 +740,7 @@ class App:
             "detail": self.detail.get(),
             "tree_ahead": self.ahead.get(), "mountain_face": self.face.get(),
             "no_blink": not bool(self.blink.get()),
+            "weather": self.weather.get(),
             "stars": bool(self.stars.get()),
             "no_twinkle": not bool(self.twinkle.get()),
             "progress": frac,

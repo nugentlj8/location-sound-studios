@@ -885,6 +885,12 @@ def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None, cover=None):
             "antennas": len((cfg.get("_scene") or {}).get("lights") or []),
             "foreground_shapes": len((cfg.get("_scene") or {}).get("fore") or []),
             "blink": not cfg.get("no_blink", False),
+            "weather": cfg.get("weather") or "off",
+            "cloud_count": len((cfg.get("_weather") or {}).get("clouds") or []),
+            "rain_streaks": len(((cfg.get("_weather") or {}).get("rain")
+                                 or {}).get("streaks") or []),
+            "weather_seed": (f"{cfg['_weather']['seed']:016x}"
+                             if cfg.get("_weather") else ""),
             "stars": bool(cfg.get("stars")),
             "star_count": len((cfg.get("_sky") or {}).get("stars") or []),
             "star_twinklers": (cfg.get("_sky") or {}).get("twinklers", 0),
@@ -1210,6 +1216,15 @@ def main():
                         "Works with every --style")
     g.add_argument("--no-stars", action="store_true",
                    help="no star field, whatever the palette")
+    g.add_argument("--weather", default="off",
+                   choices=scene_mod.WEATHER_STATES,
+                   help="clouds in whatever sky the silhouette leaves free, "
+                        "and rain in front of it. rain implies clouds. Both "
+                        "are static - drawn once and held, so the video costs "
+                        "nothing extra - and both take their colour from the "
+                        "palette in use rather than being tuned per style, "
+                        "landing softer than the skyline on every preset. "
+                        "Works with every --style")
     g.add_argument("--no-twinkle", action="store_true",
                    help="hold the stars steady instead of letting them fade "
                         "out and return (stars only). Video only, and it "
