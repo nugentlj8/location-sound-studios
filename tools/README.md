@@ -11,6 +11,7 @@ test audio if it is not there.
 | `identity_check.py` | renders the style/palette/state/stars matrix plus one video per style and SHAs them, to prove a change left every existing style byte-for-byte identical |
 | `weather_samples.py` | the weather review set — every style off/clouds/rain, the three palettes that decide the contrast rule, and Morning at thumbnail size on four seeds plus one with the cloud band forced onto the slate |
 | `stars_preview.py` | the 24-still star-field review set — both styles, both playback states, every palette that allows a field |
+| `encode_bench.py` | libx264 vs h264_nvenc vs av1_nvenc on the SAME layer PNGs and filter graph, timed interleaved, so the difference measured is the encoder and nothing else |
 | `stars_fade_options.py` | three star fade depths on one 30-second clip, so the depth can be chosen against a real encode |
 
 ## Proving a change renders identically
