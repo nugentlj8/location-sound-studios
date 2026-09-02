@@ -268,6 +268,13 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
             else:
                 D.draw_line(dr, y0, amp, lv, W, c, lw, mode)
 
+    # Rain goes IN FRONT of the silhouette and BEHIND the slate: it is weather
+    # between the viewer and the scene, and the text is the one thing standing
+    # in front of the weather. Tinted rather than painted, so the played half
+    # of the skyline stays the played half - see lss_draw.draw_rain.
+    if wx:
+        D.draw_rain(img, wx, W, H, bg, fg)
+
     M = 84 * k
     n = format_number(cfg.get("number", ""), cfg.get("number_style", "No."))
     nw = D.text_width(n, 27 * k, 11 * k, FONT) if n else 0.0
@@ -317,7 +324,20 @@ def _weather(cfg, db, dh=720.0):
     if (cfg.get("weather") or "off") == "off":
         return None
     return scene_mod.weather(db, state=cfg["weather"],
+                             detail=cfg.get("detail", "Default"),
                              horizon_y=_horizon(cfg, dh), dh=dh)
+
+
+def _clouds_only(wx):
+    """The same weather with the rain taken out.
+
+    For the twinkle probe, and only for it. A cloud genuinely covers a star and
+    has to be in that test; a streak does not - it is drawn in FRONT of the
+    silhouette, one design unit wide, and under STAR_CLEAR = 0 a streak
+    clipping the corner of a star rect would disqualify a twinkler sitting in
+    open sky. The probe therefore never sees rain, whatever this render draws.
+    """
+    return dict(wx, rain=None) if wx else wx
 
 
 def slate_boxes(cfg, dh=720.0):
@@ -511,9 +531,9 @@ def _cover(cfg, db, lv, style, scale, dyn, out):
                                          detail=cfg.get("detail", "Default"),
                                          scale=scale, dynamics=dyn,
                                          ceiling=ceiling, dh=COVER_DH)
-    # ...and the clouds over the square sky, built at the square design height
-    # rather than reused: the cover has 1.8x the band to fill and fills it -
-    # see lss_scene.weather
+    # ...and the weather over the square sky, built at the square design
+    # height rather than reused: the cover has 1.8x the band and gets 1.8x the
+    # rain, at the same streak size - see lss_scene.weather
     ccfg["_weather"] = _weather(ccfg, db, dh=COVER_DH)
     if cfg.get("stars"):
         ccfg["_sky"] = scene_mod.sky(db, detail=cfg.get("detail", "Default"),
@@ -593,7 +613,9 @@ def video_layers(cfg, lv, W, H, d, dur=0):
         # twinkler only earns its filters where THIS is still bare background.
         # One extra compose against an encode measured in minutes, and it is
         # the only test that cannot be fooled - see _visible_stars.
-        paths["probe"] = compose(dict(cfg, _sky=None), lv, W, H, fg,
+        paths["probe"] = compose(dict(cfg, _sky=None,
+                                      _weather=_clouds_only(cfg.get("_weather"))),
+                                 lv, W, H, fg,
                                  os.path.join(d, "_probe.png"))
     return paths
 
@@ -1018,9 +1040,12 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     cfg["_weather"] = _weather(cfg, db)
     if cfg.get("_weather"):
         wx = cfg["_weather"]
+        rain = (wx.get("rain") or {}).get("streaks") or []
         progress(f"Weather {wx['state']}: {len(wx['clouds'])} clouds over "
-                 f"{wx['band'][1] - wx['band'][0]:.0f} units of sky "
-                 f"(seed {wx['seed']:016x})")
+                 f"{wx['band'][1] - wx['band'][0]:.0f} units of sky"
+                 + (f", {len(rain)} streaks at "
+                    f"{wx['rain']['lean']:+.0f}\u00b0" if rain else "")
+                 + f" (seed {wx['seed']:016x})")
 
     tw = int(cfg.get("thumb_width", 1920))
     th = round(tw * 9 / 16)

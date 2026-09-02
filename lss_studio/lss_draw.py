@@ -431,7 +431,7 @@ def star_fade(col, bg, t, f):
 
 
 # --- weather tones ---------------------------------------------------------
-# A cloud is never given a colour. It is derived from the two the
+# Clouds and rain are never given a colour. They are derived from the two the
 # palette already has, and the amount is a target CONTRAST RATIO rather than a
 # mix fraction - for the reason _depth exists at all. The presets run from 2.40
 # (Morning, white on gold) to 15.41 (Aurora, near-white on near-black), and one
@@ -460,6 +460,12 @@ CLOUD_UNDER_CR = 1.18            # the shaded underside, as a contrast step
                                  # edge reads as a mistake in any palette.
                                  # Both endpoints are the palette's own, so
                                  # this introduces no fourth colour
+RAIN_F = 0.22                    # rain gets a little more than a cloud: a
+                                 # streak is 1 design unit wide against a
+                                 # cloud's 300, and a thin mark needs more
+                                 # contrast to read at the same weight
+RAIN_CR_MAX = 1.70               # ...before per-streak alpha takes it back
+                                 # down to an effective 1.15-1.40
 TONE_FLOOR, TONE_CEIL = 8, 247   # no channel may reach 0 or 255. Nothing in
                                  # the shipping presets comes close - the
                                  # extremes measure 37 and 238 - but a
@@ -500,6 +506,7 @@ def weather_tones(bg, fg):
     pole = _pole(bg, fg)
     head = _contrast(fg, bg)
     ccr = min(CLOUD_CR_MAX, 1.0 + (head - 1.0) * CLOUD_F)
+    rcr = min(RAIN_CR_MAX, 1.0 + (head - 1.0) * RAIN_F)
     body = tone_at(bg, pole, ccr)
     dark = bg if _lum(bg) < _lum(pole) else pole
     return {"cloud": body,
@@ -507,7 +514,8 @@ def weather_tones(bg, fg):
             # bisection that placed the body on the sky places the underside
             # on the body - one step, normalised, in every palette
             "under": tone_at(body, dark, CLOUD_UNDER_CR),
-            "cloud_cr": ccr}
+            "rain": tone_at(bg, pole, rcr),
+            "cloud_cr": ccr, "rain_cr": rcr}
 
 
 def draw_clouds(dr, wx, W, H, bg, fg):
@@ -537,6 +545,35 @@ def draw_clouds(dr, wx, W, H, bg, fg):
             if x1 > x0:
                 dr.rectangle([x0 * k * SS, (y0 + dy) * k * SS,
                               x1 * k * SS, (y1 + dy) * k * SS], fill=col)
+
+
+def draw_rain(img, wx, W, H, bg, fg):
+    """Static rain, over the silhouette and under the slate.
+
+    The one thing in this module drawn with real per-pixel alpha rather than a
+    mix(), and the reason is the layer underneath: a streak painted opaque in a
+    sky tone would punch holes in the accent-filled skyline and fight the
+    playhead, which is the one read this drawing is not allowed to weaken. An
+    8-bit mask tints it instead, so a streak over the played half stays accent
+    and a streak over the sky stays sky.
+
+    The mask is L-mode - one byte a pixel, not four - so the 3000px cover costs
+    36MB here rather than 144MB. Streaks land in the supersampled buffer and
+    take the existing LANCZOS step down with everything else.
+    """
+    r = (wx or {}).get("rain")
+    if not r:
+        return
+    k = W / 1280.0
+    mask = Image.new("L", img.size, 0)
+    md = ImageDraw.Draw(mask)
+    # design units, so a streak is 1.7px on a 1920 thumbnail and 2.7px on the
+    # square cover. A pixel width here is what would send it to a hairline
+    lw = max(1, int(round(r["width"] * k * SS)))
+    for x0, y0, x1, y1, a in r["streaks"]:
+        md.line([(x0 * k * SS, y0 * k * SS), (x1 * k * SS, y1 * k * SS)],
+                fill=int(round(255 * a)), width=lw)
+    img.paste(weather_tones(bg, fg)["rain"], (0, 0, img.width, img.height), mask)
 
 
 def draw_sky(dr, sky, W, H, col, bg):

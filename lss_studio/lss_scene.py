@@ -473,16 +473,16 @@ STAR_DIP_FLOOR = 0.42            # ...and this fraction of the dip at the very
                                  # than a flicker
 
 
-# --- weather: clouds in whatever sky is left -------------------------------
+# --- weather: clouds, and rain that does not move --------------------------
 # A third background stream, salted off the envelope seed exactly as the stars
 # are, so turning weather on can never move a star or a building. It is
 # deliberately NOT part of sky(): weather has to work on a palette with no star
-# field, and keeping it separate is what lets the twinkle probe see the
-# clouds, which occlude a star, without the sky having to be on at all.
+# field, and keeping it separate is also what lets the twinkle probe see the
+# clouds - which occlude a star - without seeing the rain, which does not.
 #
 # Nothing here reads the loudness. The seed varies the weather from recording
 # to recording; the envelope decides the skyline and nothing else.
-WEATHER_STATES = ["off", "clouds"]
+WEATHER_STATES = ["off", "clouds", "rain"]   # rain implies clouds
 WEATHER_SALT = 0x3A17BE          # ...xored into the envelope seed, as STAR_SALT
 
 CLOUD_TOP = STAR_TOP             # the same top margin the star field takes
@@ -522,6 +522,24 @@ CLOUD_UNDER = 0.10               # the shaded underside, as a fraction of cloud
                                  # rectangle ends in two square corners partway
                                  # along, which reads as a stripe painted on a
                                  # cloud rather than as its shaded base
+
+RAIN_LEAN = (9.0, 17.0)          # degrees off vertical. ONE angle for the whole
+                                 # frame, drawn once: rain that leans different
+                                 # ways in different places is not weather
+RAIN_LEN = (10.0, 27.0)          # design units, so a streak is 15-40px on a
+                                 # 1920 thumbnail and 23-63px on the 3000px
+                                 # cover - it scales with the frame like every
+                                 # other length in this module
+RAIN_W = 1.15                    # design units. Also scaled: the failure to
+                                 # avoid is a streak going to a hairline on the
+                                 # export, which a pixel width would guarantee
+RAIN_ALPHA = (0.20, 0.60)        # per streak, over the tone lss_draw derives.
+                                 # The variation is the depth cue - there is no
+                                 # motion to carry one
+RAIN_N = 620                     # streaks at Default detail over the 16:9
+                                 # frame. A DENSITY, as STAR_N is: a square
+                                 # cover has 1.8x the frame to fill and gets
+                                 # 1.8x the streaks, at the same size
 
 
 # --- how high the silhouette may rise, per column --------------------------
@@ -1591,8 +1609,36 @@ def _clouds(rng, band_top, band_bot):
     return out
 
 
-def weather(db, state="clouds", horizon_y=None, dh=DH):
-    """The weather layer: clouds over whatever sky the style leaves.
+def _rain(rng, f, ground):
+    """Static rain: short straight segments on one shared lean.
+
+    No motion, no sparkle, drawn once and held for the whole video - so it
+    costs the encode nothing and cannot fight the playhead for attention.
+    Length and alpha vary per streak; the angle does not, because rain leaning
+    two ways in one frame is not rain.
+    """
+    lean = math.radians(rng.uniform(*RAIN_LEAN))
+    if rng.random() < 0.5:
+        lean = -lean
+    sx, sy = math.sin(lean), math.cos(lean)
+    n = max(24, int(round(RAIN_N * f * (ground / GROUND))))
+    cell = math.sqrt(DW * ground / n)
+    cols = max(1, int(round(DW / cell)))
+    rows_ = max(1, int(round(ground / cell)))
+    cw, ch = DW / cols, ground / rows_
+    out = []
+    for r in range(rows_):
+        for c in range(cols):
+            x = (c + rng.random()) * cw
+            y = (r + rng.random()) * ch
+            ln = rng.uniform(*RAIN_LEN)
+            out.append((x, y, x + sx * ln, y + sy * ln,
+                        float(rng.uniform(*RAIN_ALPHA))))
+    return {"lean": math.degrees(lean), "width": RAIN_W, "streaks": out}
+
+
+def weather(db, state="clouds", detail="Default", horizon_y=None, dh=DH):
+    """The weather layer: clouds, and rain that does not move.
 
     Its own RNG stream, salted off the envelope seed, so a render with weather
     on is bit-identical in every OTHER layer to the same render without it -
@@ -1603,11 +1649,16 @@ def weather(db, state="clouds", horizon_y=None, dh=DH):
     """
     if state not in WEATHER_STATES or state == "off":
         return None
+    f = resolve_detail(detail)
     seed = seed_from(db) ^ WEATHER_SALT
     rng = np.random.default_rng(seed)
-    bot = vlayout(dh).ground if horizon_y is None else horizon_y
+    L = vlayout(dh)
+    bot = L.ground if horizon_y is None else horizon_y
     return {"seed": seed, "state": state, "dh": dh, "band": (CLOUD_TOP, bot),
-            "clouds": _clouds(rng, CLOUD_TOP, bot)}
+            "clouds": _clouds(rng, CLOUD_TOP, bot),
+            # rain is drawn IN FRONT of the silhouette, so it runs the whole
+            # frame down to the ground line rather than stopping at the band
+            "rain": _rain(rng, f, L.ground) if state == "rain" else None}
 
 
 def sky(db, detail="Default", boxes=None, twinkle=True, dh=DH):
