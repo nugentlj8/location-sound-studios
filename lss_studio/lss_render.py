@@ -235,6 +235,13 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
     if sky:
         D.draw_sky(dr, sky, W, H, cfg.get("star_color") or fg, bg)
 
+    # ...then the clouds over them, and under everything else. A cloud is
+    # opaque, so it occludes a star exactly as the silhouette occludes both -
+    # and a sun or moon will land between these two calls, behind the cloud.
+    wx = cfg.get("_weather")
+    if wx:
+        D.draw_clouds(dr, wx, W, H, bg, fg)
+
     bands = cfg.get("_bands") if line_col == "__cycle__" else None
     sc = cfg.get("_scene")
     if sc:
@@ -284,6 +291,33 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
         w = D.text_width(time_text, 31 * k, 0, FONT)
         D.text_run(dr, time_text, 31 * k, 0, W - M - w, (360 + dy) * k, slate, FONT)
     return D.finish(img, W, H, out, **(save or {}))
+
+
+def _horizon(cfg, dh):
+    """How far down the sky is clear, in design units - the cloud band's floor.
+
+    A silhouette style is read off its own built geometry, so a style added
+    later needs no entry anywhere. The row styles have no geometry to read, and
+    the same number comes out of the layout they are actually drawn with -
+    which is why this lives here rather than in lss_scene: row_layout is a
+    drawing decision and compose() is where the two arguments to it are known.
+    """
+    sc = cfg.get("_scene")
+    if sc:
+        return scene_mod.horizon(sc)
+    lay = D.row_layout(dh, int(cfg.get("rows", 1)), bool(cfg.get("filled")),
+                       top=0.66, bot=0.95)
+    return min(y0 - amp for y0, amp in lay)
+
+
+def _weather(cfg, db, dh=720.0):
+    """This frame's weather, or None. Built per frame SHAPE, as the scene is:
+    a square cover has a taller sky and gets more of it, not a stretched copy.
+    """
+    if (cfg.get("weather") or "off") == "off":
+        return None
+    return scene_mod.weather(db, state=cfg["weather"],
+                             horizon_y=_horizon(cfg, dh), dh=dh)
 
 
 def slate_boxes(cfg, dh=720.0):
@@ -477,6 +511,10 @@ def _cover(cfg, db, lv, style, scale, dyn, out):
                                          detail=cfg.get("detail", "Default"),
                                          scale=scale, dynamics=dyn,
                                          ceiling=ceiling, dh=COVER_DH)
+    # ...and the clouds over the square sky, built at the square design height
+    # rather than reused: the cover has 1.8x the band to fill and fills it -
+    # see lss_scene.weather
+    ccfg["_weather"] = _weather(ccfg, db, dh=COVER_DH)
     if cfg.get("stars"):
         ccfg["_sky"] = scene_mod.sky(db, detail=cfg.get("detail", "Default"),
                                      boxes=boxes,
@@ -974,6 +1012,15 @@ def run(cfg, progress=lambda s: None, on_progress=None):
         # gets none, and which ones those are is read off the composed layer
         progress(f"Sky: {len(sk['stars'])} stars, {sk['twinklers']} twinkling, "
                  f"in {cfg['star_color']} (seed {sk['seed']:016x})")
+
+    # The weather, on its own stream again. Built for every style: the band it
+    # fills is read from whatever this style put in the sky, not from a table.
+    cfg["_weather"] = _weather(cfg, db)
+    if cfg.get("_weather"):
+        wx = cfg["_weather"]
+        progress(f"Weather {wx['state']}: {len(wx['clouds'])} clouds over "
+                 f"{wx['band'][1] - wx['band'][0]:.0f} units of sky "
+                 f"(seed {wx['seed']:016x})")
 
     tw = int(cfg.get("thumb_width", 1920))
     th = round(tw * 9 / 16)

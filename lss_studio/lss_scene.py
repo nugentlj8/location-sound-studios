@@ -473,6 +473,57 @@ STAR_DIP_FLOOR = 0.42            # ...and this fraction of the dip at the very
                                  # than a flicker
 
 
+# --- weather: clouds in whatever sky is left -------------------------------
+# A third background stream, salted off the envelope seed exactly as the stars
+# are, so turning weather on can never move a star or a building. It is
+# deliberately NOT part of sky(): weather has to work on a palette with no star
+# field, and keeping it separate is what lets the twinkle probe see the
+# clouds, which occlude a star, without the sky having to be on at all.
+#
+# Nothing here reads the loudness. The seed varies the weather from recording
+# to recording; the envelope decides the skyline and nothing else.
+WEATHER_STATES = ["off", "clouds"]
+WEATHER_SALT = 0x3A17BE          # ...xored into the envelope seed, as STAR_SALT
+
+CLOUD_TOP = STAR_TOP             # the same top margin the star field takes
+CLOUD_H = (0.11, 0.20)           # cloud height, as a fraction of the BAND the
+                                 # style leaves free - not of the frame. This
+                                 # is the whole per-style adaptation: the city
+                                 # gives 360 design units of sky and the houses
+                                 # give 508, and a cloud is the same fraction
+                                 # of each rather than the same size in both
+CLOUD_ASPECT = (2.6, 4.3)        # width over height. Wide: a cloud that is as
+                                 # tall as it is broad reads as a puff of smoke
+CLOUD_H_MAX = 0.055 * DW         # ...but never taller than this. The cap is
+                                 # what makes a square cover's 920-unit sky
+                                 # hold MORE clouds rather than the same few
+                                 # blown up: without it, size grows with the
+                                 # band and count falls as its square
+CLOUD_H_MIN = 18.0               # ...and never so small it stops reading
+CLOUD_FILL = 0.16                # fraction of the band's area under cloud.
+                                 # Count falls out of this and the size above,
+                                 # so a tight style gets fewer AND smaller
+                                 # rather than the same number crammed in
+CLOUD_MIN, CLOUD_MAX = 3, 12     # ...but never fewer than a sky needs to read
+                                 # as clouded, nor so many it becomes overcast
+CLOUD_SINK = 0.55                # how far a cloud may hang below the horizon,
+                                 # as a fraction of its own height. The
+                                 # silhouette is drawn after it and cuts it, so
+                                 # this costs nothing and is what stops every
+                                 # cloud sitting in a neat row along the peaks
+CLOUD_LOBES = (4, 8)             # bumps along the top edge
+CLOUD_LOBE_JIT = (0.86, 1.16)    # ...each this much of its profile radius
+CLOUD_SLAB = 0.34                # the flat bottom, as a fraction of height. A
+                                 # cloud is lobes on top and a straight line
+                                 # underneath; without the line it is a bush
+CLOUD_UNDER = 0.10               # the shaded underside, as a fraction of cloud
+                                 # height. Drawn as the SAME cloud offset down
+                                 # by this much, not as a strip across it: a
+                                 # rectangle ends in two square corners partway
+                                 # along, which reads as a stripe painted on a
+                                 # cloud rather than as its shaded base
+
+
 # --- how high the silhouette may rise, per column --------------------------
 # A single ceiling makes every column pay the WORST column's price, and the
 # slate is not a solid bar: it is text down the left, a clock on the right and
@@ -1452,6 +1503,111 @@ def _body_span(boxes):
         return None
     left = top[0][1]
     return (left, top[1][0] if len(top) > 1 else DW)
+
+
+def horizon(sc):
+    """The highest point the silhouette reaches, in design units.
+
+    The cloud band's floor. Read off the built geometry rather than from a
+    per-style table, so a style added later needs no entry here: whatever it
+    puts in the scene dict is what the clouds make room for. A style with no
+    silhouette at all - topo, blocks - has no geometry to read, and its caller
+    works the same number out of its row layout instead.
+
+    Clouds are allowed BELOW this line by CLOUD_SINK, because the silhouette is
+    drawn over them and cuts them for free. The line is where the sky stops
+    being guaranteed open, not a hard ceiling.
+    """
+    ys = []
+    for key in ("mountains", "trees", "houses", "town_trees", "fore"):
+        for o in sc.get(key, []):
+            for pk in ("poly", "shadow", "lit", "chimney"):
+                p = o.get(pk)
+                if p:
+                    ys.append(min(q[1] for q in p))
+            for a in o.get("antenna", []) or []:
+                ys.append(min(q[1] for q in a))
+    return min(ys) if ys else sc.get("dh", DH) * 0.5
+
+
+def _cloud(rng, cx, cy, h):
+    """One cloud: lobes along a spine, sitting on a flat bottom.
+
+    Flat fills, no blur. The silhouette in front of it is a hard edge, and a
+    soft cloud behind a hard skyline reads as two pictures - and an opaque
+    shape is also what occludes the stars for free, on the same rule every
+    shape in draw_scene already follows.
+
+    Every lobe is placed so its own bottom lands ON the base line, which is
+    what lets the slab between the outer two centres close the shape into a
+    flat-bottomed cloud with rounded ends rather than a box with bumps.
+    """
+    w = h * rng.uniform(*CLOUD_ASPECT)
+    base = cy + h / 2.0
+    n = int(rng.integers(CLOUD_LOBES[0], CLOUD_LOBES[1] + 1))
+    lobes = []
+    for i in range(n):
+        t = (i + 0.5) / n
+        # a bell along the spine: the middle lobes are the tall ones, so the
+        # cloud has a crown instead of a flat run of identical bumps
+        prof = 0.42 + 0.58 * math.sin(math.pi * t) ** 0.75
+        ry = h * 0.5 * prof * rng.uniform(*CLOUD_LOBE_JIT)
+        rx = ry * rng.uniform(1.00, 1.45)
+        lx = cx - w / 2.0 + t * w + rng.uniform(-0.04, 0.04) * w
+        lobes.append((lx, base - ry, rx, ry))
+    slab = h * CLOUD_SLAB
+    return {"cx": cx, "base": base, "h": h, "lobes": lobes,
+            # the flat bottom, between the outer lobe CENTRES so the ends stay
+            # round: at either centre the end lobe reaches the base on its own
+            "slab": (lobes[0][0], base - slab, lobes[-1][0], base),
+            # how far the body rides above the shaded copy of itself
+            "under_dy": h * CLOUD_UNDER}
+
+
+def _clouds(rng, band_top, band_bot):
+    """Clouds spread over the band the style actually leaves free.
+
+    Size is a fraction of the band, so the city's 352 units of sky and the
+    town's 500 get clouds in proportion rather than one size forced into both.
+    Count then falls out of the band's AREA over that size - which is why a
+    tight style gets fewer and smaller instead of the same number squeezed up.
+    """
+    band = band_bot - band_top
+    if band <= 0:
+        return []
+    hm = min(CLOUD_H_MAX, max(CLOUD_H_MIN, band * sum(CLOUD_H) / 2.0))
+    wm = hm * sum(CLOUD_ASPECT) / 2.0
+    n = int(round(CLOUD_FILL * DW * band / max(1.0, wm * hm)))
+    n = max(CLOUD_MIN, min(CLOUD_MAX, n))
+    out = []
+    for i in range(n):
+        h = min(CLOUD_H_MAX, max(CLOUD_H_MIN, band * rng.uniform(*CLOUD_H)))
+        # an even run across the frame, then jittered - the star field's rule,
+        # for the star field's reason: uniform random over a width clumps, and
+        # three clouds in a huddle over one building is not weather
+        cx = (i + 0.5 + rng.uniform(-0.42, 0.42)) * DW / n
+        cy = rng.uniform(band_top + h / 2.0, band_bot + CLOUD_SINK * h)
+        out.append(_cloud(rng, cx, cy, h))
+    return out
+
+
+def weather(db, state="clouds", horizon_y=None, dh=DH):
+    """The weather layer: clouds over whatever sky the style leaves.
+
+    Its own RNG stream, salted off the envelope seed, so a render with weather
+    on is bit-identical in every OTHER layer to the same render without it -
+    the guarantee sky() gives the stars, for the same reason.
+
+    Nothing here is driven by the audio. The seed varies the weather between
+    recordings; the loudness decides the skyline and stops there.
+    """
+    if state not in WEATHER_STATES or state == "off":
+        return None
+    seed = seed_from(db) ^ WEATHER_SALT
+    rng = np.random.default_rng(seed)
+    bot = vlayout(dh).ground if horizon_y is None else horizon_y
+    return {"seed": seed, "state": state, "dh": dh, "band": (CLOUD_TOP, bot),
+            "clouds": _clouds(rng, CLOUD_TOP, bot)}
 
 
 def sky(db, detail="Default", boxes=None, twinkle=True, dh=DH):

@@ -307,6 +307,12 @@ def _lum(c):
     return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
 
 
+def _contrast(a, b):
+    """WCAG contrast ratio between two colours, 1.0 to 21.0."""
+    la, lb = _lum(a), _lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
 def _depth(t, col, bg):
     """Scale a mix-toward-the-sky by how much contrast there is to spend.
 
@@ -317,8 +323,7 @@ def _depth(t, col, bg):
     of hard-coding the amount keeps both halves at a comparable weight, in any
     palette.
     """
-    a, b = _lum(col), _lum(bg)
-    c = (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    c = _contrast(col, bg)
     return t * max(0.60, min(1.0, (c / 8.0) ** 0.5))
 
 
@@ -423,6 +428,115 @@ def star_fade(col, bg, t, f):
     star off the sky - the exact thing a fade needs to be able to overrule.
     """
     return mix(star_tone(col, bg, t), bg, f)
+
+
+# --- weather tones ---------------------------------------------------------
+# A cloud is never given a colour. It is derived from the two the
+# palette already has, and the amount is a target CONTRAST RATIO rather than a
+# mix fraction - for the reason _depth exists at all. The presets run from 2.40
+# (Morning, white on gold) to 15.41 (Aurora, near-white on near-black), and one
+# fixed mix would be a whisper on the first and a slab on the second.
+#
+# The pole is the palette's OWN foreground, which in every shipping preset is
+# already on the correct side of its sky: lighter on the seven dark skies,
+# DARKER on Mist's pale one, with no special case anywhere. A palette whose
+# foreground is on the wrong side falls back to white or black - it has no
+# other colour that could be a cloud.
+CLOUD_F = 0.18                   # cloud contrast as a fraction of the sky-to-
+                                 # skyline contrast the palette actually has.
+                                 # This is what keeps Morning readable: a flat
+                                 # target would put a cloud behind its white
+                                 # slate at 1.78, the headroom term holds it
+                                 # at 1.92
+CLOUD_CR_MAX = 1.45              # ...and an absolute ceiling, so the roomy
+                                 # palettes stay soft rather than spending
+                                 # everything they have
+CLOUD_UNDER_CR = 1.18            # the shaded underside, as a contrast step
+                                 # from the BODY toward whichever of the sky
+                                 # and the pole is DARKER. Not "further from the sky": on Mist
+                                 # that is darker and correct, but on Night and
+                                 # Morning it is lighter, and a cloud lit from
+                                 # above with a bright rim along its bottom
+                                 # edge reads as a mistake in any palette.
+                                 # Both endpoints are the palette's own, so
+                                 # this introduces no fourth colour
+TONE_FLOOR, TONE_CEIL = 8, 247   # no channel may reach 0 or 255. Nothing in
+                                 # the shipping presets comes close - the
+                                 # extremes measure 37 and 238 - but a
+                                 # pure-white streak on a dark sky is exactly
+                                 # what chroma subsampling smears in the encode
+
+
+def _pole(bg, fg):
+    """Which way a cloud goes from this sky, and what it goes toward."""
+    lb, lf = _lum(bg), _lum(fg)
+    up = lb < 0.5                            # dark sky: lighter. Light: darker
+    if (lf > lb) == up:
+        return fg
+    return "#FFFFFF" if up else "#000000"
+
+
+def tone_at(bg, pole, cr):
+    """The tone `cr` of contrast away from the sky, toward `pole`.
+
+    Bisected rather than solved: mix() is integer-rounded per channel, so the
+    closed form would not agree with the colour actually drawn. 24 halvings
+    settle t to 1 part in 16 million, which is well past the point where the
+    rounding decides the answer.
+    """
+    lo, hi = 0.0, 1.0
+    for _ in range(24):
+        m = (lo + hi) / 2.0
+        if _contrast(mix(bg, pole, m), bg) < cr:
+            lo = m
+        else:
+            hi = m
+    return tuple(max(TONE_FLOOR, min(TONE_CEIL, v))
+                 for v in mix(bg, pole, (lo + hi) / 2.0))
+
+
+def weather_tones(bg, fg):
+    """Every colour the weather layer draws in, for one palette."""
+    pole = _pole(bg, fg)
+    head = _contrast(fg, bg)
+    ccr = min(CLOUD_CR_MAX, 1.0 + (head - 1.0) * CLOUD_F)
+    body = tone_at(bg, pole, ccr)
+    dark = bg if _lum(bg) < _lum(pole) else pole
+    return {"cloud": body,
+            # tone_at measures from whatever it is given, so the same
+            # bisection that placed the body on the sky places the underside
+            # on the body - one step, normalised, in every palette
+            "under": tone_at(body, dark, CLOUD_UNDER_CR),
+            "cloud_cr": ccr}
+
+
+def draw_clouds(dr, wx, W, H, bg, fg):
+    """The cloud band, over the stars and under the silhouette.
+
+    Opaque flat fills, which is what occludes a star for free - the same rule
+    that lets an outlined mountain hide the range behind it. Lobes first, then
+    the slab that closes them into a flat bottom, then the shaded strip along
+    the underside of that.
+
+    Nothing here is clipped to the sky band. A cloud hanging below the horizon
+    is cut by the silhouette drawn over it, and a cloud behind the slate is cut
+    by text that draws last and opaque - which is the read being aimed for.
+    """
+    k = W / 1280.0
+    t = weather_tones(bg, fg)
+    for c in wx.get("clouds") or []:
+        # the shaded copy first, then the body riding above it - so what shows
+        # underneath is the cloud's OWN outline offset, round ends and all,
+        # rather than a bar with two corners in the middle of it
+        for dy, col in ((0.0, t["under"]), (-c["under_dy"], t["cloud"])):
+            for lx, ly, rx, ry in c["lobes"]:
+                dr.ellipse([(lx - rx) * k * SS, (ly + dy - ry) * k * SS,
+                            (lx + rx) * k * SS, (ly + dy + ry) * k * SS],
+                           fill=col)
+            x0, y0, x1, y1 = c["slab"]
+            if x1 > x0:
+                dr.rectangle([x0 * k * SS, (y0 + dy) * k * SS,
+                              x1 * k * SS, (y1 + dy) * k * SS], fill=col)
 
 
 def draw_sky(dr, sky, W, H, col, bg):
