@@ -93,6 +93,48 @@ def text_width(s, size, tracking, font_path):
     return (sum(f.getlength(c) for c in s) + tracking * SS * (len(s) - 1)) / SS
 
 
+def draw_slate(dr, cfg, W, k, dy, number, time_text, fg, slate, font_path):
+    """Every run of slate text, in design units scaled by k.
+
+    Lifted out of lss_render.compose() unchanged - same expressions, same
+    order - so that it needs only a DRAW TARGET rather than a composed frame
+    under it. That is the whole point of it living here: the photo mode draws
+    the identical slate onto a transparent layer and composites it over a
+    photograph, and there is no second implementation to drift from this one.
+
+    `number` arrives already formatted, and `font_path` is passed rather than
+    read from a global, because both of those belong to lss_render - the
+    numero-sign fallback needs the loaded font and the number styles are its
+    table. What is left here is drawing, which is what this module is.
+
+    lss_render.slate_boxes() measures these same runs at k=1 to find where the
+    ink ends. If a position below moves, that has to move with it.
+    """
+    M = 84 * k
+    n = number
+    nw = text_width(n, 27 * k, 11 * k, font_path) if n else 0.0
+    avail = W - 2 * M - nw - (40 * k if n else 0)
+
+    # a theme suffix can make the series long; shrink it to clear the number
+    ssize, strack = 27 * k, 11 * k
+    for _ in range(24):
+        if text_width(cfg["series"], ssize, strack, font_path) <= avail:
+            break
+        ssize *= 0.94
+        strack *= 0.94
+    text_run(dr, cfg["series"], ssize, strack, M, (150 + dy) * k, fg, font_path)
+    if n:
+        text_run(dr, n, 27 * k, 11 * k, W - M - nw, (150 + dy) * k, slate, font_path)
+
+    text_run(dr, cfg["place"], 104 * k, 7 * k, M, (296 + dy) * k, fg, font_path)
+    text_run(dr, f'{cfg["city"]}  ·  {cfg["conditions"]}',
+             31 * k, 8 * k, M, (360 + dy) * k, slate, font_path)
+    if time_text:
+        w = text_width(time_text, 31 * k, 0, font_path)
+        text_run(dr, time_text, 31 * k, 0, W - M - w, (360 + dy) * k, slate,
+                 font_path)
+
+
 def new_canvas(W, H, bg="#13232E"):
     img = Image.new("RGB", (W * SS, H * SS), rgb(bg))
     return img, ImageDraw.Draw(img)

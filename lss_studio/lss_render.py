@@ -275,28 +275,10 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
     if wx:
         D.draw_rain(img, wx, W, H, bg, fg)
 
-    M = 84 * k
-    n = format_number(cfg.get("number", ""), cfg.get("number_style", "No."))
-    nw = D.text_width(n, 27 * k, 11 * k, FONT) if n else 0.0
-    avail = W - 2 * M - nw - (40 * k if n else 0)
-
-    # a theme suffix can make the series long; shrink it to clear the number
-    ssize, strack = 27 * k, 11 * k
-    for _ in range(24):
-        if D.text_width(cfg["series"], ssize, strack, FONT) <= avail:
-            break
-        ssize *= 0.94
-        strack *= 0.94
-    D.text_run(dr, cfg["series"], ssize, strack, M, (150 + dy) * k, fg, FONT)
-    if n:
-        D.text_run(dr, n, 27 * k, 11 * k, W - M - nw, (150 + dy) * k, slate, FONT)
-
-    D.text_run(dr, cfg["place"], 104 * k, 7 * k, M, (296 + dy) * k, fg, FONT)
-    D.text_run(dr, f'{cfg["city"]}  \u00b7  {cfg["conditions"]}',
-               31 * k, 8 * k, M, (360 + dy) * k, slate, FONT)
-    if time_text:
-        w = D.text_width(time_text, 31 * k, 0, FONT)
-        D.text_run(dr, time_text, 31 * k, 0, W - M - w, (360 + dy) * k, slate, FONT)
+    D.draw_slate(dr, cfg, W, k, dy,
+                 format_number(cfg.get("number", ""),
+                               cfg.get("number_style", "No.")),
+                 time_text, fg, slate, FONT)
     return D.finish(img, W, H, out, **(save or {}))
 
 
