@@ -12,8 +12,9 @@ import argparse, calendar, datetime, json, math, os, shutil, subprocess, sys, ti
 import numpy as np
 import lss_presets as presets_mod
 import lss_draw as D
+import lss_photo as photo_mod
 import lss_scene as scene_mod
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageStat
 
 INK, BONE = "#13232E", "#F0E7D6"     # the default sky, and what reads on it
 FONT = None                      # resolved at runtime
@@ -526,6 +527,86 @@ def _cover(cfg, db, lv, style, scale, dyn, out):
                    time_text=cfg["start"], played=True, save=D.png_meta())
 
 
+SCRIM_DEFAULT = 0.65             # how heavy the wash behind the slate is on a
+                                 # photo. Set from the worst case rather than
+                                 # by eye: a near-white hazy sky under the
+                                 # Night palette measures 1.01:1 bare, 2.69 at
+                                 # 0.45 and 3.52 at 0.55, and first clears the
+                                 # 4.5:1 the small slate lines want at 0.65.
+                                 # A dark photo is barely touched by it - the
+                                 # wash is the palette's own sky - so the cost
+                                 # of setting it for the hard case is small
+
+
+def _slate_names(cfg):
+    """The slate's lines, in the order slate_boxes() returns them."""
+    n = format_number(cfg.get("number", ""), cfg.get("number_style", "No."))
+    return (["series"] + (["number"] if n else [])
+            + ["place", "city · conditions", "time"])
+
+
+def _slate_legibility(img, cfg, W, H):
+    """The weakest contrast between slate ink and the photo under it.
+
+    Reported rather than enforced. The colour presets were chosen against
+    measured contrast on rendered frames and a photograph answers to nothing,
+    so this is the only place the number can be known at all - and the fix is
+    usually --scrim rather than a different palette, which is a judgement the
+    render cannot make on its own.
+
+    Measured on the FINISHED frame, so the scrim is included: what is wanted is
+    the contrast the viewer gets, not the one the bare photo had.
+    """
+    k = W / 1280.0
+    boxes = slate_boxes(cfg, dh=1280.0 * H / W)
+    fg = cfg.get("foreground") or BONE
+    worst, where = 99.0, ""
+    for (x0, x1, b), name in zip(boxes, _slate_names(cfg)):
+        # a band just above the baseline, which for caps IS where the ink is
+        box = (max(0, int(x0 * k)), max(0, int((b - 34) * k)),
+               min(W, int(x1 * k)), min(H, int(b * k)))
+        if box[2] <= box[0] or box[3] <= box[1]:
+            continue
+        m = ImageStat.Stat(img.crop(box).convert("RGB")).mean
+        hx = "#%02X%02X%02X" % tuple(max(0, min(255, int(round(v)))) for v in m)
+        c = presets_mod.contrast(fg, hx)
+        if c < worst:
+            worst, where = c, name
+    return worst, where
+
+
+def _photo_frame(cfg, path, W, H, slate_on, time_text=None, out=None,
+                 save=None, measure=False):
+    """One photo as a finished frame, with the slate on it if this output wants one.
+
+    The whole of photo mode's drawing is these few lines, because the slate is
+    the same slate: lss_draw.draw_slate does not know or care that there is a
+    photograph under it rather than a skyline.
+    """
+    img = photo_mod.frame(path, W, H)
+    under = None
+    if slate_on:
+        k = W / 1280.0
+        dh = 1280.0 * H / W
+        fg = cfg.get("foreground") or BONE
+        slate = fg if cfg.get("slate_mono") else cfg["accent"]
+        boxes = slate_boxes(cfg, dh=dh)
+        # the wash first, on its own, so `under` is the tone the ink will
+        # actually sit on rather than the finished frame with the ink in it
+        img = D.scrim_over(img, W, H, k, float(cfg.get("scrim", SCRIM_DEFAULT)),
+                           cfg.get("background") or INK,
+                           max(b[2] for b in boxes))
+        under = img if measure else None
+        img = D.slate_over(
+            img, cfg, W, H, k, dh / 2.0 - 360.0,
+            format_number(cfg.get("number", ""), cfg.get("number_style", "No.")),
+            time_text, fg, slate, FONT)
+    if out:
+        img.save(out, **(save or {}))
+        img = out
+    return (img, under) if measure else img
+
+
 def variant_filename(slug, v):
     """Palette baked into the name, because a folder of variants is otherwise
     unreviewable: they differ only in colour, and two nearby skies are hard to
@@ -834,8 +915,138 @@ def build_video(cfg, paths, audio, dur, W, H, out, fps=10, crf=None,
     return out
 
 
+def _ffmpeg_progress(cmd, dur, on_progress=None):
+    """Run ffmpeg with -progress and report elapsed/total, as build_video does.
+
+    Its own copy rather than a shared one: build_video's loop is load-bearing
+    for every existing render and the identity harness hashes what it produces,
+    so it is left exactly as it is.
+    """
+    cmd = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True, bufsize=1)
+    t0, noise, eta_s = time.time(), [], None
+    for line in p.stdout:
+        line = line.strip()
+        if line.startswith("out_time="):
+            try:
+                hh, mm, ss = line.split("=", 1)[1].split(":")
+                secs = int(hh) * 3600 + int(mm) * 60 + float(ss)
+            except ValueError:
+                continue
+            frac = min(1.0, max(0.0, secs / dur)) if dur else 0.0
+            el = time.time() - t0
+            eta = None
+            if frac > 0.05:
+                raw = el / frac - el
+                eta_s = raw if eta_s is None else eta_s * 0.7 + raw * 0.3
+                eta = eta_s
+            if on_progress:
+                on_progress(frac, eta)
+        elif line and not any(line.startswith(k) for k in (
+                "frame=", "fps=", "bitrate=", "total_size=", "out_time_",
+                "dup_frames=", "drop_frames=", "speed=", "progress=", "stream_")):
+            noise.append(line)
+    p.wait()
+    if p.returncode != 0:
+        raise SystemExit("ffmpeg failed:\n" + "\n".join(noise[-12:]))
+    return noise
+
+
+def photo_segment(png, out, dur, fps, cfg, crf=None):
+    """Encode one held still for `dur` seconds.
+
+    ONE keyframe, covering the whole segment. This is the single setting that
+    matters here and it is not the one the shipping encode tunes: -g fps*10 was
+    chosen against flat vector frames where an I-frame costs almost nothing, and
+    on a photograph each one costs about 3 MB. Measured on a 180s segment at
+    2560x1440, everything else held equal - -g 100: 27.3s and 57.6 MB; one
+    keyframe: 14.5s and 3.1 MB. Eighteen times the bytes for a keyframe every
+    ten seconds of an image that never changes.
+
+    CRF stays at the shipping 16. With every P-frame a skip the segment's size
+    is essentially its one I-frame, so the quality setting costs almost nothing
+    here and there is no reason to spend it. -tune stillimage was measured too
+    and earns nothing on a held frame - it tunes for still IMAGES, not for a
+    repeated one - so it is deliberately not used.
+    """
+    n = max(1, int(round(dur * fps)))
+    cmd = ["ffmpeg", "-y", "-v", "error",
+           "-loop", "1", "-framerate", str(fps), "-i", png,
+           "-t", f"{dur:.3f}", "-an",
+           "-c:v", "libx264", "-preset", cfg.get("x264_preset", "slow"),
+           "-crf", str(crf if crf is not None else cfg.get("crf", 16)),
+           "-pix_fmt", "yuv444p" if cfg.get("full_chroma") else "yuv420p",
+           "-g", str(n), "-video_track_timescale", "90000", out]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit("ffmpeg failed encoding a photo segment:\n"
+                         + r.stderr[-800:])
+    return out
+
+
+def build_photo_video(cfg, segs, unique, photos, audio, dur, W, H, out, work,
+                      fps=10, crf=None, progress=lambda s: None,
+                      on_progress=None):
+    """The photo cycle as a video: encode each distinct segment once, then
+    assemble the whole runtime by stream copy.
+
+    This is the reason photo mode is cheap. A segment holds one still for the
+    whole interval, so every full-length segment of a given photo is the same
+    encode as every other one; only the final segment differs, because it is
+    truncated to the audio's end. Four photos over three hours are therefore
+    four encodes and, when the run time is not a whole number of intervals, one
+    short fifth - not the sixty segments the timeline actually contains, and
+    not the 108,000 frames a per-frame render would put through the encoder.
+
+    The concat demuxer copies the video stream rather than re-encoding it, so
+    the repeats cost nothing but the mux. What is left is the audio: a
+    three-hour AAC pass is around five minutes and is the dominant cost of the
+    whole render, which is the right thing for it to be.
+
+    Every segment shares one resolution, pixel format and timebase and starts
+    on a keyframe by construction, which is what lets the copy be a copy.
+    """
+    # straight into _work rather than a subdirectory of it, as the skyline
+    # layers already go: nothing else is written here, and one less nested
+    # directory is one less thing for the cleanup to have to remove
+    seg_dir = work
+    slate_on = cfg.get("slate_scope", "both") == "both"
+
+    files = {}
+    for i, (key, u) in enumerate(unique.items(), 1):
+        png = os.path.join(seg_dir, f"_{key}.png")
+        _photo_frame(cfg, photos[u["photo"]], W, H, slate_on, out=png)
+        files[key] = photo_segment(png, os.path.join(seg_dir, f"{key}.mp4"),
+                                   u["dur"], fps, cfg, crf)
+        progress(f"  segment {i}/{len(unique)}: "
+                 f"{os.path.basename(photos[u['photo']])}, {u['dur']:.0f}s, "
+                 f"{os.path.getsize(files[key]) / 1e6:.2f} MB")
+        if on_progress:
+            on_progress(0.18 + 0.22 * i / len(unique), None)
+
+    # basenames, and the list sits beside them: the concat demuxer resolves a
+    # relative entry against the LIST's own directory, which sidesteps having
+    # to escape a Windows path inside a demuxer argument
+    lst = os.path.join(seg_dir, "_concat.txt")
+    with open(lst, "w", encoding="utf-8") as fh:
+        for sg in segs:
+            fh.write(f"file '{os.path.basename(files[sg['key']])}'\n")
+
+    progress(f"Assembling {len(segs)} segments and encoding audio…")
+    _ffmpeg_progress(
+        ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+         "-i", lst, "-i", audio, "-map", "0:v", "-map", "1:a",
+         "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
+         "-t", f"{dur:.3f}", "-shortest", out],
+        dur, on_progress=(lambda f, e=None: on_progress(0.40 + 0.60 * f, e))
+        if on_progress else None)
+    return out
+
+
 # ----------------------------------------------------------------- driver
-def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None, cover=None):
+def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None, cover=None,
+             photos=None):
     """Everything needed to understand or reproduce a render, saved beside it."""
     import datetime
     if variants:
@@ -913,11 +1124,126 @@ def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None, cover=None):
         "cover": ({"file": os.path.basename(cover), "size": COVER_PX,
                    "design_height": COVER_DH, "dpi": 300}
                   if cover else None),
+        "photos": photos,
         "variants": variants or [],
         "source_audio": os.path.basename(cfg.get("audio", "")),
         "duration_s": dur,
         "levels": lv,
     }
+
+
+def _photo_targets(cfg):
+    """Every output this render will actually write, as (label, W, H).
+
+    They do not ask the same thing: a 3000x3000 cover needs 3000px on the SHORT
+    edge and refuses photos that clear the video and the thumbnail comfortably.
+    """
+    tw = int(cfg.get("thumb_width", 1920))
+    out = [("thumbnail", tw, round(tw * 9 / 16))]
+    if not cfg.get("thumb_only"):
+        out.append(("video", cfg.get("width", 2560), cfg.get("height", 1440)))
+    if cfg.get("cover"):
+        out.append(("cover", COVER_PX, COVER_PX))
+    return out
+
+
+def _run_photo(cfg, slug, outdir, work, progress, on_progress, stage):
+    """A photo render, end to end.
+
+    Deliberately never calls envelope(). There is no geometry to derive here,
+    so the audio is probed for its LENGTH and otherwise not decoded at all -
+    on a three-hour FLAC that is the single largest saving the mode makes,
+    before any of the encode work below.
+    """
+    photos = list(cfg["photos"])
+    dur = probe_duration(cfg["audio"])
+    if dur <= 0:
+        raise SystemExit(f"Could not read a duration from {cfg['audio']}.")
+
+    tw = int(cfg.get("thumb_width", 1920))
+    th = round(tw * 9 / 16)
+    W, H = cfg.get("width", 2560), cfg.get("height", 1440)
+    scope = cfg.get("slate_scope", "both")
+
+    # Every output this render will actually write, checked in one pass before
+    # anything is built. They do not ask the same thing - a 3000x3000 cover
+    # needs 3000px on the SHORT edge and refuses photos that clear the other
+    # two - and finding that out after the video has encoded is exactly the
+    # waste the up-front rule exists to prevent.
+    for p, note in cfg.get("_photos_ok") or photo_mod.validate(
+            photos, _photo_targets(cfg)):
+        if note:
+            progress(f"  {os.path.basename(p)}: {note}")
+
+    interval = float(cfg.get("photo_interval", photo_mod.DEFAULT_INTERVAL))
+    segs, unique = photo_mod.plan(dur, len(photos), interval)
+    progress(f"{len(photos)} photos on a {interval:g}s cycle: {len(segs)} "
+             f"segments over {dur / 60:.1f} min, "
+             f"{len(unique)} distinct to encode")
+    if on_progress:
+        on_progress(0.08, None)
+
+    # A still is a still: the cover follows the thumbnail rather than the
+    # video, so 'thumbnail' means every IMAGE this render writes. Only the
+    # encode is what 'thumbnail' takes the slate away from.
+    still_slate = scope in ("both", "thumbnail")
+    tt = cfg["start"] if still_slate else None
+    progress("Building thumbnail…")
+    thumb, under = _photo_frame(cfg, photos[0], tw, th, still_slate,
+                                time_text=tt, measure=True,
+                                out=os.path.join(outdir, f"{slug}_thumb.png"))
+    if still_slate:
+        c, where = _slate_legibility(under, cfg, tw, th)
+        progress(f"  slate contrast {c:.1f}:1 at its weakest ({where})"
+                 + ("" if c >= 4.5 else " - raise --scrim if that reads thin"))
+    if on_progress:
+        on_progress(0.12, None)
+
+    cover = None
+    if cfg.get("cover"):
+        progress("Building cover…")
+        cover = _photo_frame(cfg, photos[0], COVER_PX, COVER_PX, still_slate,
+                             time_text=tt, save=D.png_meta(),
+                             out=os.path.join(outdir, f"{slug}_cover.png"))
+        progress(f"  {os.path.basename(cover)}  {COVER_PX}x{COVER_PX}, "
+                 f"{os.path.getsize(cover) / 1e6:.2f} MB")
+
+    pinfo = {
+        "interval_s": interval,
+        "slate_scope": scope,
+        "scrim": float(cfg.get("scrim", SCRIM_DEFAULT)),
+        "sources": photos,
+        "segments": len(segs),
+        # what actually went through the encoder, which is the claim the mode
+        # makes and so the thing worth being able to check afterwards
+        "encoded_segments": [
+            {"key": k, "photo": os.path.basename(photos[u["photo"]]),
+             "dur_s": round(u["dur"], 3)} for k, u in unique.items()],
+    }
+
+    def done(vid):
+        json.dump(_sidecar(cfg, [], dur, cfg.get("scale", ""),
+                           cfg.get("dynamics", ""), 0, None, cover, pinfo),
+                  open(os.path.join(outdir, f"{slug}_render.json"), "w"),
+                  indent=2)
+        shutil.rmtree(work, ignore_errors=True)
+        if on_progress:
+            on_progress(1.0, 0)
+        return {"thumbnail": thumb, "thumbnails": [thumb], "video": vid,
+                "cover": cover, "duration": dur, "folder": outdir}
+
+    if cfg.get("thumb_only"):
+        progress("Done (thumbnail only).")
+        return done(None)
+
+    progress(f"Encoding {dur / 60:.1f} min of video from "
+             f"{len(unique)} segment encodes…")
+    vid = build_photo_video(cfg, segs, unique, photos, cfg["audio"], dur, W, H,
+                            os.path.join(outdir, f"{slug}.mp4"), work,
+                            fps=cfg.get("fps", 10), progress=progress,
+                            on_progress=on_progress)
+    progress("Done.")
+    return done(vid)
 
 
 def run(cfg, progress=lambda s: None, on_progress=None):
@@ -934,6 +1260,9 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     # ...and the sky's own colour with them, from whichever of the three the
     # palette names. An error rather than a silent no-op, for the reason
     # scene_mod.check() gives: the alternative is finding out after the encode.
+    if cfg.get("photos"):
+        cfg["stars"] = False          # nothing to stand behind: the photo IS
+                                      # the whole background
     if cfg.get("stars"):
         P = presets_mod.load()
         key = cfg.get("color_preset") or "None (series colour)"
@@ -952,6 +1281,15 @@ def run(cfg, progress=lambda s: None, on_progress=None):
                     "too bright to carry one. Choose from: "
                     + ", ".join(presets_mod.star_presets(P)))
             cfg["stars"] = False
+    # Photos are checked before anything is created. Every other early failure
+    # in here leaves an empty render folder behind and that has never mattered;
+    # a mistyped photo path is the one somebody will actually hit.
+    if cfg.get("photos"):
+        t = _photo_targets(cfg)
+        progress("Checking photos against "
+                 + ", ".join(f"{n} {w}x{h}" for n, w, h in t) + "…")
+        cfg["_photos_ok"] = photo_mod.validate(cfg["photos"], t)
+
     # degrade an unmounted network path here rather than in the GUI, so the CLI
     # stays usable off the studio's network too instead of dying in makedirs
     base = usable(cfg["outdir"], "LSS Renders")
@@ -972,6 +1310,9 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     def stage(lo, hi):
         return (lambda f, eta=None: on_progress(lo + (hi - lo) * f, eta)) \
             if on_progress else None
+
+    if cfg.get("photos"):
+        return _run_photo(cfg, slug, outdir, work, progress, on_progress, stage)
 
     progress("Reading audio…")
     db, dur = envelope(cfg["audio"],
@@ -1217,6 +1558,31 @@ def main():
     g.add_argument("--slate-mono", action="store_true",
                    help="draw the small slate text in the silhouette colour, "
                         "not the accent")
+    g = a.add_argument_group(
+        "photo", "photographs instead of a generated silhouette")
+    g.add_argument("--photos", default="", metavar="PATHS",
+                   help="use photographs instead of a generated silhouette: a "
+                        "comma-separated list of image files, or a folder of "
+                        "them (sorted by name). Turns photo mode ON - there is "
+                        "no audio-derived geometry in a photo render, so the "
+                        "silhouette and loudness flags are refused rather than "
+                        "ignored. Photos are EXIF-rotated, converted to sRGB, "
+                        "centre-cropped to the frame and downscaled; one that "
+                        "is too small is an error, never an upscale")
+    g.add_argument("--photo-interval", type=float,
+                   default=photo_mod.DEFAULT_INTERVAL, metavar="SECONDS",
+                   help=f"how long each photo holds before the next "
+                        f"(default {photo_mod.DEFAULT_INTERVAL:g}). The cycle "
+                        "repeats until the audio is covered and the last "
+                        "segment is cut to the audio's end")
+    g.add_argument("--scrim", type=float, default=SCRIM_DEFAULT,
+                   metavar="0-1",
+                   help=f"how heavy the wash behind the slate is on a photo "
+                        f"(default {SCRIM_DEFAULT}, 0 turns it off). A "
+                        "photograph puts arbitrary luminance under the text "
+                        "where a palette never would; this is what replaces "
+                        "that guarantee. Painted in the background colour, "
+                        "faded out below the slate's own lowest ink")
 
     g = a.add_argument_group("shape", "how loudness becomes height")
     g.add_argument("--scale", default="Skyline (rank)", choices=SCALES)
@@ -1252,6 +1618,12 @@ def main():
                         "- more sky, the slate on the frame's middle - always "
                         "as the finished fully-played frame. Adds about half a "
                         "second and composes with everything else")
+    g.add_argument("--slate-scope", default="both",
+                   choices=photo_mod.SLATE_SCOPES,
+                   help="which outputs carry the slate in photo mode: both, "
+                        "thumbnail (the images get it, the video stays bare), "
+                        "or none. Photo mode only - a generated render always "
+                        "carries its slate")
     g.add_argument("--progress", type=float, default=1.0,
                    help="how far through playback the thumbnail is drawn, 0-1. "
                         "Defaults to 1, the finished fully-played frame; use "
@@ -1293,7 +1665,29 @@ def main():
     if n.color_preset not in presets_mod.color_preset_names(P):
         a.error(f"--colors: unknown preset '{n.color_preset}'. Choose from: "
                 + ", ".join(presets_mod.color_preset_names(P)))
+    photos = photo_mod.collect(n.photos)
+    if photos:
+        # read off the RAW namespace, before any series default is written
+        # back over a flag - otherwise every render would look as though it
+        # had asked for a style by name
+        err = photo_mod.check(dict(vars(n), photos=photos,
+                                   stars_explicit=bool(n.stars)))
+        if err:
+            a.error(err)
+    else:
+        # ...and the same rule the other way round. A photo flag on a generated
+        # render would do nothing at all, and a flag that was typed and ignored
+        # is only ever discovered by noticing it had no effect.
+        for flag, val, dflt in (("--photo-interval", n.photo_interval,
+                                 photo_mod.DEFAULT_INTERVAL),
+                                ("--scrim", n.scrim, SCRIM_DEFAULT),
+                                ("--slate-scope", n.slate_scope, "both")):
+            if val != dflt:
+                a.error(f"{flag} needs --photos: it only means something for a "
+                        "photo render. A generated render always carries its "
+                        "slate, and has no photographs to wash behind it.")
     cfg = vars(n)
+    cfg["photos"] = photos
     custom = {"accent": n.accent,
               "background": n.background, "foreground": n.foreground}
     # base_acc is the series/occasion/custom accent before any colour preset
@@ -1327,10 +1721,11 @@ def main():
     cfg["geometry"] = presets_mod.series_geometry(n.series_key, P)
     cfg["scene"] = presets_mod.series_scene(n.series_key, P)
     cfg["style"] = n.style or presets_mod.series_style(n.series_key, P)
-    err = scene_mod.check(cfg["scene"], cfg["style"], n.rows, n.filled,
-                          n.progress)
-    if err:
-        a.error(err)
+    if not cfg["photos"]:
+        err = scene_mod.check(cfg["scene"], cfg["style"], n.rows, n.filled,
+                              n.progress)
+        if err:
+            a.error(err)
     try:
         scene_mod.resolve_detail(n.detail)
     except ValueError as e:
