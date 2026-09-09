@@ -4,7 +4,7 @@ Everything is drawn at SS times the final size and downsampled with LANCZOS,
 which gives clean antialiasing on curves and text without a vector backend.
 """
 
-from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
+from PIL import Image, ImageChops, ImageDraw, ImageFont, PngImagePlugin
 
 SS = 2
 
@@ -842,3 +842,111 @@ def draw_banded(dr, y0, amp, lv, W, sw, mode, bands, filled=False, baseline=None
                     dr.ellipse([x - r, y - r, x + r, y + r], fill=c)
                 else:
                     dr.rectangle([x - r, y - r, x + r, y + r], fill=c)
+
+
+# ------------------------------------------------------- the slate on a photo
+# Everything above draws onto an opaque canvas whose colour is known before a
+# pixel is placed, which is why this module has needed no alpha until now. A
+# photograph is not a known colour, so the slate has to be built on a layer of
+# its own and brought down onto it.
+
+SCRIM_FADE = 190.0               # design units the wash takes to ease from full
+                                 # strength to nothing, BELOW the slate's lowest
+                                 # ink. Generous on purpose: the fade is what
+                                 # keeps this a graded top light rather than a
+                                 # bar with text sitting in it, and at 190 it
+                                 # spans a quarter of the frame's height
+
+
+def draw_scrim(W, H, strength, col, hold, fade):
+    """A vertical wash from the top of the frame, as its own RGBA layer.
+
+    A photograph puts arbitrary luminance under the slate. The palettes never
+    do - their colours were chosen against measured contrast on rendered frames
+    - so this is what replaces a guarantee photo mode gives up.
+
+    Full strength for `hold` rows and only THEN easing away over `fade`. A
+    single ramp from the top edge down to below the slate is the obvious shape
+    and it is the wrong one: it is weakest exactly where the text is. Measured
+    on a bright hazy sky, weakest slate line, Night palette - bare photo
+    1.01:1; one ramp at the shipped strength 1.16:1, which is no scrim at all;
+    held flat across the ink and faded below, 4.71:1. The ramp spends its
+    density on the empty top of the frame.
+
+    Smoothstep rather than linear over the fade, so there is no visible line
+    where the hold ends. Painted in the palette's own background rather than
+    black, so a render keeps its sky even where a photograph is doing the work.
+    """
+    hold = max(0, int(round(hold)))
+    fade = max(1, int(round(fade)))
+    n = min(H, hold + fade)
+    ramp = Image.new("L", (1, n))
+    vals = []
+    for i in range(n):
+        if i <= hold:
+            v = 1.0
+        else:
+            t = (i - hold) / float(fade)
+            v = 1.0 - t * t * (3.0 - 2.0 * t)
+        vals.append(int(round(255 * strength * v)))
+    ramp.putdata(vals)
+    a = Image.new("L", (W, H), 0)
+    a.paste(ramp.resize((W, n), Image.BILINEAR), (0, 0))
+    layer = Image.new("RGBA", (W, H), rgb(col) + (0,))
+    layer.putalpha(a)
+    return layer
+
+
+def scrim_over(base, W, H, k, strength, col, hold):
+    """The wash alone, applied to the photo at final size.
+
+    Not supersampled, and it does not need to be: it is a smooth vertical
+    gradient with no edge anywhere in it to alias. One blend at 1:1 instead of
+    four at SS.
+
+    Kept separate from the text rather than drawn on the same layer so that the
+    legibility measurement has something to measure. What matters is the tone
+    UNDER the ink, and once the glyphs are down they are most of what a sample
+    of that band contains - measuring the finished frame reported 1.9:1 for a
+    slate actually sitting at 3.5:1, because the near-white text was averaged
+    into its own background.
+    """
+    if strength <= 0 or hold <= 0:
+        return base
+    layer = draw_scrim(W, H, strength, col, hold * k, SCRIM_FADE * k)
+    return Image.alpha_composite(base.convert("RGBA"), layer).convert("RGB")
+
+
+def slate_over(base, cfg, W, H, k, dy, number, time_text, fg, slate, font_path):
+    """The slate composited onto a photograph. Returns a new RGB image.
+
+    The slate is drawn at SS on a transparent layer and brought down onto a
+    base that is ALREADY at final size. The photo is never resampled up to the
+    supersampled grid - that would be exactly the interpolation lss_photo
+    refuses to do - so the two meet at 1:1 instead.
+
+    Premultiplied, and the two halves are downsampled SEPARATELY: the coverage
+    as an L image, the colour as an RGB one. Handing Pillow a single
+    premultiplied RGBA image and resizing that is the obvious way to write this
+    and it is wrong - LANCZOS has negative lobes, they push the colour above
+    the alpha at a glyph edge, and the composite then overshoots into a bright
+    fringe. Measured against the opaque path over a flat sky, in levels of
+    mean absolute error: separate channels 0.15, one RGBA resize 3.3 to 4.6,
+    with peaks of 146 to 253 where a stroke turns.
+
+    The final add saturates, which is the clamp the same ringing needs on the
+    way out.
+    """
+    layer = Image.new("RGBA", (W * SS, H * SS), (0, 0, 0, 0))
+    draw_slate(ImageDraw.Draw(layer), cfg, W, k, dy, number, time_text,
+               fg, slate, font_path)
+    r, g, b, a = layer.split()
+    pm = Image.merge("RGB", (ImageChops.multiply(r, a),
+                             ImageChops.multiply(g, a),
+                             ImageChops.multiply(b, a))).resize(
+                                 (W, H), Image.LANCZOS)
+    am = a.resize((W, H), Image.LANCZOS)
+    inv = ImageChops.invert(am)
+    keep = ImageChops.multiply(base.convert("RGB"),
+                               Image.merge("RGB", (inv, inv, inv)))
+    return ImageChops.add(pm, keep)
