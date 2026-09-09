@@ -31,12 +31,13 @@ audio clip (or `--thumb-only` to skip the slow video encode) and inspect the out
 `tools/` holds the development scripts (not shipped by the updater, which only sends `lss_studio/`).
 When a change is meant to leave existing styles untouched, prove it rather than assert it:
 `py tools/identity_check.py baseline` on the old commit, `after` on the new one, then `compare` —
-90 style/palette/playback-state combinations, SHA'd. See `tools/README.md`.
+187 cases - 180 style/palette/star/playback-state thumbnails plus 7 videos hashed on
+their DECODED frames rather than the container. See `tools/README.md`.
 
 ## Architecture
 
-The three modules worth knowing before you edit them (`lss_presets.py` and `lss_draw.py` are
-self-explanatory on reading):
+The four modules worth knowing before you edit them (`lss_presets.py` and `lss_draw.py` are
+self-explanatory on reading, bar the alpha rule under Conventions):
 
 - **`lss_render.py`** — the render engine and CLI entry point (`main()`). This is where audio
   becomes pixels:
@@ -51,6 +52,10 @@ self-explanatory on reading):
   4. `compose()` is the single frame-composition function shared by the thumbnail and every video
      frame — the video is literally the thumbnail layout rendered at a larger size, with the
      timestamp slot left blank for ffmpeg's `drawtext` to fill in live.
+  4a. The slate itself is `lss_draw.draw_slate()` — lifted out of `compose()` unchanged so it needs
+     only a draw TARGET, which is what lets photo mode composite the identical slate onto a
+     photograph with no second implementation. `slate_boxes()` still measures the same runs at k=1
+     and has to move with it.
   4b. For a silhouette style, `compose()` hands off to `lss_draw.draw_scene()` instead, drawing the
      geometry `lss_scene.build()` produced. The `played` flag picks which side of the playhead the
      frame represents; `--progress` composites the two into one still without an encode.
@@ -84,6 +89,16 @@ self-explanatory on reading):
      one thumbnail per palette instead of one. It sits *after* the envelope, levels and geometry,
      so N looks cost one audio pass and one `compose()` each — and share a silhouette exactly.
      Filenames carry the palette; a folder of variants is otherwise unreviewable.
+  5f. Photo mode branches at `_run_photo()`, before the audio pass — it calls `probe_duration()`
+     rather than `envelope()`, since there is no geometry to derive. `build_photo_video()` encodes
+     each DISTINCT segment once and assembles the runtime with a concat stream copy, so four photos
+     over three hours are four encodes rather than sixty. The keyframe interval is the setting that
+     matters and it is not the generated one: `-g fps*10` was tuned on flat vector frames where an
+     I-frame is nearly free, and on a photograph it costs 18x the bytes (measured, 180s at
+     2560x1440: 57.6 MB against 3.1 MB for one keyframe per segment). CRF stays at 16 — with every
+     other frame a skip, the segment IS its keyframe. The audio pass is then the dominant cost of a
+     long render, which is the right thing for it to be.
+
   6. `run()` is the orchestration entry point both the GUI and CLI call — writes the thumbnail, the
      video (unless `--thumb-only`), and a `<slug>_render.json` sidecar capturing every parameter used,
      so a past render can be understood or reproduced later. Output goes to a fresh
@@ -111,11 +126,32 @@ self-explanatory on reading):
 - **`lss_studio.py`** — the Tkinter GUI. Builds the config dict expected by `lss_render.run()` and
   calls it in a background thread, polling a `queue.Queue` on a Tk `after()` timer for log lines and
   progress. Not the place to add render logic — it's a thin form over `lss_render.run()`.
-  Settings live on a `ttk.Notebook` of five tabs — Slate, Look, Colour, Shape, Video — matching the
+  Settings live on a `ttk.Notebook` of six tabs — Slate, Look, Colour, Shape, Video, Photo — matching the
   argparse groups in `lss_render.main()` (Look and Colour share the `look` group); put a new setting
   in the group that matches what it decides, and in the same group on both sides. The audio/output fields and the Render button,
   Thumbnail only and Preview at controls stay outside the tabs and always visible. Keep the form's
   requested height under ~1000px or it clips on a laptop screen, which is what the tabs are for.
+  The notebook sizes to its TALLEST tab, which is why photo mode got a tab of its own rather than
+  more rows on Look: a sixth tab costs no height at all (measured: 857px before and after).
+  `_photo_apply()` only ever DISABLES, and runs at the end of `_style_changed`/`_colors_changed`/
+  `_thumbonly_changed`, so it can never hand back what their finer greying just took away;
+  `_photo_mode_changed` is the one that restores, and it restores before calling them.
+
+- **`lss_photo.py`** — photo-background mode: a supplied set of stills cycling on a fixed interval
+  in place of the generated skyline. It is a **mode, not a style**, and the reason is the style
+  interface itself: every entry in `SCENE_STYLES` must be buildable by `lss_scene.build(style, db,
+  lv, ...)`, which is entirely audio-derived geometry, and a photograph has none. `--photos` is the
+  switch; `check()` refuses every silhouette and loudness flag rather than ignoring it, on the same
+  grounds `lss_scene.check()` gives. Nothing here reads the audio — the recording decides only how
+  long the cycle runs.
+  Photos are normalised to the output, never the reverse: `load()` applies EXIF orientation *first*
+  (Pillow does not, and every measurement after it would be on the wrong axis) then converts to
+  sRGB; `frame()` centre-crops and LANCZOS-downscales. Never upscales — `validate()` checks every
+  photo against every output the render will write, together and up front, because the cover asks
+  3000px on the SHORT edge and refuses stills the video accepts.
+  `plan()` is the piece the encode rests on: it splits the runtime into segments and gives every
+  full-length segment of a given photo the same KEY, so N photos cost N encodes however long the
+  recording is. Only the truncated final segment gets a key of its own.
 
 Supporting pieces:
 - **`lss_presets.json`** — user-editable data, not code. Defines named "series" (each with a name,
@@ -151,6 +187,14 @@ and every running copy of the app picks it up on its next launch via `lss_update
   the foreground at a target contrast ratio, so a cloud is the palette's own ink heavily washed
   toward its own sky. The direction falls out — the foreground is on the lighter side of the sky
   in eight presets and the darker side in Mist, so Mist's clouds darken with no special case.
+- Alpha is the exception, not the rule. Everything draws onto an opaque RGB canvas at `SS` and
+  downsamples, which is why `mix()` exists instead of transparency. The two places that genuinely
+  need alpha are `draw_rain()` (an `L` mask) and photo mode's `slate_over()`. In the latter,
+  premultiply and then downsample the coverage as an **L** image and the colour as an **RGB** one,
+  SEPARATELY. Handing Pillow one premultiplied RGBA image and resizing that is the obvious way to
+  write it and it is wrong: LANCZOS' negative lobes push colour above alpha at a glyph edge and the
+  composite overshoots into a bright fringe. Measured mean absolute error against the opaque path
+  over a flat sky - separate channels 0.15 levels, one RGBA resize 3.3 to 4.6 with peaks past 250.
 - Design coordinates are fixed at a 1280x720 basis and scaled by `k = W / 1280.0` everywhere in
   `compose()` — when adjusting layout, change the design-unit constant, not per-resolution numbers.
 - `usable()` in `lss_render.py` degrades a configured network drive path (`Z:\...`) to a folder in

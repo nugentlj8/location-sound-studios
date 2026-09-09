@@ -595,6 +595,116 @@ py lss_studio\lss_render.py --list-presets
 its accent. Give a background without a foreground and it derives a readable one for you, so a
 custom sky can never leave the skyline invisible.
 
+## Photo backgrounds
+
+Instead of a generated silhouette, a render can use your own photographs, cycling on a fixed
+interval with the slate composited on top. Tick **Use photographs instead of a generated
+silhouette** on the **Photo** tab, add the stills, and set how long each one holds.
+
+From the command line:
+
+```
+py lss_studio\lss_render.py recording.flac --photos "C:\stills\monsoon" ^
+   --photo-interval 180 --place "Roosevelt Row" --city "Phoenix, AZ" ^
+   --conditions "Clear 78F" --date 2026-09-08 --start "06:30 PM"
+```
+
+`--photos` takes a folder (sorted by name) or a comma-separated list, and its presence is what turns
+photo mode on. `--photo-interval` is seconds per photo, 180 by default. The cycle repeats until the
+recording ends and the last segment is cut to the audio's end.
+
+### It is a mode, not a silhouette
+
+A photo render has no envelope, no levels and no geometry — the recording decides only how long the
+cycle runs. Everything that shapes a generated silhouette is therefore refused rather than quietly
+ignored: `--style`, `--scale`, `--dynamics`, `--towers`, `--detail`, `--rows`, `--filled`,
+`--weather`, `--stars`, `--variants` and a part-way `--progress` are all errors here. In the window
+they simply grey out.
+
+The palette still reaches the slate: **Colours** sets the text colours and the scrim, and the
+background colour is otherwise unused because the photograph is the whole background.
+
+### What happens to each photo
+
+Every input is rotated by its EXIF orientation tag, converted to sRGB if it carries a different
+colour profile, centre-cropped to the frame's shape and downscaled with Lanczos.
+
+Photos are never upscaled. One too small for the frame is an error naming the file, its size and
+what was needed — checked for every output the render will write, before anything is built. The
+three ask different things, and a Spotify cover asks the most: it is a 3000×3000 square, so it needs
+3000px on the photo's **short** edge and will refuse stills that clear the video comfortably.
+
+### The slate over a photograph
+
+A palette's colours were chosen against measured contrast. A photograph answers to nothing, so the
+slate gets a **scrim** — a wash in the palette's own background colour, held at full strength across
+the slate and easing away below it.
+
+`--scrim` sets how heavy, from 0 to 1, default 0.65. That number is set from the worst case rather
+than by eye: a near-white hazy sky under the Night palette measures 1.01:1 bare, 3.52:1 at 0.55, and
+first clears the 4.5:1 the small slate lines want at 0.65. A dark photograph is barely touched by it.
+`--scrim 0` turns it off.
+
+Every render prints the weakest contrast it actually achieved, so you can see the number rather than
+guess at it:
+
+```
+  slate contrast 4.7:1 at its weakest (series)
+```
+
+### Which outputs carry the slate
+
+`--slate-scope`, or **Slate on** beside the Render button:
+
+| value | thumbnail and cover | video |
+|---|---|---|
+| `both` (default) | slate | slate |
+| `thumbnail` | slate | bare |
+| `none` | bare | bare |
+
+The clock shows the start time, as the thumbnail's always has. It does not tick through the video
+the way a generated render's does: there is no playhead in photo mode for it to be the label of, and
+a clock changing every minute would make every minute of the video a distinct frame — which is
+exactly what the encode below is built to avoid.
+
+### What it costs to encode
+
+Each photo is held for the whole interval, so the video is a handful of static segments rather than
+a stream of unique frames. Each distinct segment is encoded **once** and the full runtime is
+assembled by stream copy, so a three-hour video from four photos costs four segment encodes, not
+sixty:
+
+```
+4 photos on a 180s cycle: 60 segments over 180.0 min, 4 distinct to encode
+```
+
+One extra short encode appears when the recording is not a whole number of intervals — that is the
+truncated final segment.
+
+The setting that matters here is the keyframe interval, and it is not the one the generated renders
+use. `-g fps*10` was chosen against flat vector frames where a keyframe costs almost nothing; on a
+photograph each one is about 3 MB. Measured on a 180-second segment at 2560×1440, everything else
+held equal:
+
+| keyframes | time | size |
+|---|---|---|
+| every 10s (the generated setting) | 27.3s | 57.6 MB |
+| every 30s | 17.5s | 19.1 MB |
+| one per segment | 14.5s | 3.1 MB |
+
+Photo mode uses one per segment. Quality stays at the shipping CRF 16 — with every other frame a
+skip, a segment's size is essentially its single keyframe, so there is nothing to buy by spending
+it.
+
+What is left is the audio, which is re-encoded over the whole runtime as it always is. On a
+three-hour render that is around five minutes and is the dominant cost of the whole thing.
+
+### Not in this pass
+
+Crossfades between photos, Ken Burns motion and per-photo grading are all out — hard cuts only.
+They are not simply deferred: each makes every frame unique and forces a full-runtime encode, which
+takes a three-hour render from about six minutes back to thirty or more.
+
 ## Where renders go
 
 By default `Z:\Sounds of the City\LSS Renders`. To send one render somewhere else:
@@ -630,8 +740,20 @@ folder is never overwritten — a repeat render becomes `..._2`.
 
 ## Command line
 
-`py lss_studio\lss_render.py --help` lists every flag, grouped as **slate**, **look**, **shape**
-and **output** — the same four groups the window uses.
+`py lss_studio\lss_render.py --help` lists every flag, grouped as **slate**, **look**, **photo**,
+**shape** and **output** — the same groups the window's tabs use.
+
+### What changed in 1.11.0
+
+**Photo backgrounds** — `--photos`, or the new **Photo** tab. A set of stills cycling on a fixed
+interval with the slate on top, instead of a generated silhouette. See
+[Photo backgrounds](#photo-backgrounds). New `--photo-interval`, `--scrim` and `--slate-scope`.
+
+A three-hour video from four photos costs four segment encodes rather than sixty: each distinct
+segment is encoded once and the runtime is assembled by stream copy.
+
+Generated renders are untouched — every existing style, palette and playback state renders
+byte-for-byte what it did before, checked across 187 cases.
 
 ### What changed in 1.9.0
 
