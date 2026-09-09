@@ -11,6 +11,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 import lss_render
+import lss_photo
 import lss_presets
 import lss_scene
 try:
@@ -127,10 +128,10 @@ class App:
         nb = ttk.Notebook(f)
         nb.grid(row=r, column=0, columnspan=3, sticky="nsew", pady=(16, 4))
         r += 1
-        slate, look, colour, shape, video = (ttk.Frame(nb, padding=14)
-                                             for _ in range(5))
+        slate, look, colour, shape, video, photo = (ttk.Frame(nb, padding=14)
+                                                    for _ in range(6))
         for tab, title in ((slate, "Slate"), (look, "Look"), (colour, "Colour"),
-                           (shape, "Shape"), (video, "Video")):
+                           (shape, "Shape"), (video, "Video"), (photo, "Photo")):
             tab.columnconfigure(1, weight=1)
             nb.add(tab, text=title)
 
@@ -319,6 +320,54 @@ class App:
                         variable=self.align).grid(row=hr, column=1, sticky="w", pady=4)
         hr += 1
 
+        # ---------- photo: stills instead of a generated silhouette ----------
+        pr = 0
+        self.photo_mode = tk.BooleanVar(value=False)
+        ttk.Checkbutton(photo, text="Use photographs instead of a generated "
+                                    "silhouette",
+                        variable=self.photo_mode,
+                        command=self._photo_mode_changed).grid(
+            row=pr, column=1, sticky="w", pady=4)
+        pr += 1
+        ttk.Label(photo, text="The recording decides how long the cycle runs; "
+                              "the photos decide what is on screen. Nothing "
+                              "on Look or Shape applies, so those grey out.",
+                  foreground=MUTED).grid(row=pr, column=1, sticky="w", pady=(0, 10))
+        pr += 1
+        ttk.Label(photo, text="Photos").grid(row=pr, column=0, sticky="nw", pady=4)
+        holder = ttk.Frame(photo)
+        holder.grid(row=pr, column=1, sticky="ew", pady=4)
+        self.photos = tk.Listbox(holder, height=5, bg=FIELD, fg=FG,
+                                 relief="flat", selectbackground=ACC,
+                                 selectforeground=BG, activestyle="none",
+                                 exportselection=False)
+        self.photos.pack(side="left", fill="both", expand=True)
+        pbtn = ttk.Frame(holder)
+        pbtn.pack(side="left", padx=(8, 0))
+        for label, cmd in (("Add…", self._photos_add),
+                           ("Remove", self._photos_remove),
+                           ("Up", lambda: self._photos_move(-1)),
+                           ("Down", lambda: self._photos_move(1))):
+            ttk.Button(pbtn, text=label, width=9, command=cmd).pack(pady=1)
+        pr += 1
+        ttk.Label(photo, text="Shown in this order and cycled until the "
+                              "recording ends. Too small for the frame is an "
+                              "error, never an upscale.",
+                  foreground=MUTED).grid(row=pr, column=1, sticky="w", pady=(0, 8))
+        pr += 1
+        self.interval = self._entry(photo, pr, "Seconds per photo",
+                                    f"{lss_photo.DEFAULT_INTERVAL:g}")
+        pr += 1
+        self.scrim = self._entry(photo, pr, "Slate scrim",
+                                 f"{lss_render.SCRIM_DEFAULT:g}")
+        pr += 1
+        ttk.Label(photo, text="0 to 1. A wash behind the slate in the "
+                              "background colour — a photo puts "
+                              "unpredictable brightness under the text where a "
+                              "palette never would. 0 turns it off.",
+                  foreground=MUTED).grid(row=pr, column=1, sticky="w", pady=(0, 6))
+        pr += 1
+
         # ---------- video: the encode only ----------
         vr = 0
         self.size = self._combo(video, vr, "Resolution",
@@ -349,11 +398,18 @@ class App:
         self.cover = tk.BooleanVar(value=False)
         ttk.Checkbutton(act, text="Spotify cover — 3000×3000 square",
                         variable=self.cover).pack(side="left", padx=(16, 0))
+        # Photo mode only, so it starts greyed: a generated render always
+        # carries its slate and there is nothing here to choose.
+        ttk.Label(act, text="Slate on").pack(side="left", padx=(16, 6))
+        self.scope = tk.StringVar(value="both")
+        self.scopebox = ttk.Combobox(act, textvariable=self.scope, width=10,
+                                     state="disabled", values=lss_photo.SLATE_SCOPES)
+        self.scopebox.pack(side="left")
         ttk.Label(act, text="Preview at").pack(side="left", padx=(20, 6))
         self.preview = ttk.Entry(act, width=5)
         self.preview.insert(0, "100")
         self.preview.pack(side="left")
-        ttk.Label(act, text="%  100 = the finished frame, 0 = unplayed",
+        ttk.Label(act, text="%  100 = finished, 0 = unplayed",
                   foreground=MUTED).pack(side="left", padx=(6, 0))
 
         self.bar = ttk.Progressbar(f, mode="determinate", maximum=1000)
@@ -412,12 +468,81 @@ class App:
             text="Renders Colours above plus each ticked colour — one "
                  "thumbnail each, in one folder."
             if on else "Tick Thumbnail only to render several colours at once.")
+        self._photo_apply()
+
+    def _photos_add(self):
+        paths = filedialog.askopenfilenames(
+            title="Choose photographs",
+            filetypes=[("Images", "*.jpg *.jpeg *.png *.tif *.tiff *.webp *.bmp"),
+                       ("All files", "*.*")])
+        for p in paths:
+            self.photos.insert("end", p)
+
+    def _photos_remove(self):
+        for i in reversed(self.photos.curselection()):
+            self.photos.delete(i)
+
+    def _photos_move(self, d):
+        """Order is the whole point of the list, so it has to be editable."""
+        sel = list(self.photos.curselection())
+        if not sel:
+            return
+        i = sel[0]
+        j = i + d
+        if not 0 <= j < self.photos.size():
+            return
+        v = self.photos.get(i)
+        self.photos.delete(i)
+        self.photos.insert(j, v)
+        self.photos.selection_set(j)
+
+    def _picked_photos(self):
+        return ([self.photos.get(i) for i in range(self.photos.size())]
+                if self.photo_mode.get() else [])
+
+    def _photo_apply(self):
+        """Grey out everything a photo render has no use for.
+
+        Only ever disables. The per-style and per-palette greying is decided by
+        _style_changed and _colors_changed, and this runs after them, so it
+        must not hand anything back that they had just taken away.
+        """
+        if not getattr(self, "photo_mode", None) or not self.photo_mode.get():
+            return
+        for w in (self.style, self.detail, self.ahead, self.face, self.weather,
+                  self.towers, self.scale, self.dyn, self.rows):
+            w.config(state="disabled")
+        for w in (self.blinkbox, self.starsbox, self.twinklebox, self.filledbox):
+            w.config(state="disabled")
+        self.variants.config(state="disabled")
+
+    def _photo_mode_changed(self):
+        """The window refuses what lss_photo.check would refuse, rather than
+        letting a silhouette setting be chosen and rejected at Render - the
+        same bargain _style_changed already makes for the fill."""
+        on = bool(self.photo_mode.get())
+        self.scopebox.config(state="readonly" if on else "disabled")
+        if on:
+            self._photo_apply()
+        else:
+            # give everything back first, then let the handlers that own these
+            # tabs take away whatever the chosen style and palette do not reach
+            for w in (self.style, self.detail, self.ahead, self.face,
+                      self.weather, self.towers, self.scale, self.dyn,
+                      self.rows):
+                w.config(state="readonly")
+            for w in (self.blinkbox, self.starsbox, self.twinklebox,
+                      self.filledbox):
+                w.config(state="normal")
+            self._style_changed()
+            self._colors_changed()
+            self._thumbonly_changed()
 
     def _picked_variants(self):
         """Selected colour presets, but only when they can actually be used -
         a selection made before the tick was cleared must not leak into a
         video render."""
-        if not self.thumbonly.get():
+        if not self.thumbonly.get() or self.photo_mode.get():
             return []
         return [self.variants.get(i) for i in self.variants.curselection()]
 
@@ -442,6 +567,7 @@ class App:
         self.stars.set(self._stars_want if ok else False)
         self.twinklebox.config(
             state="normal" if ok and self.stars.get() else "disabled")
+        self._photo_apply()
 
     def _style_changed(self, _evt=None):
         """Grey out a treatment the chosen silhouette never reaches - blocks
@@ -460,6 +586,7 @@ class App:
         ok = s in lss_scene.FILLED_STYLES
         self.filledbox.config(state="normal" if ok else "disabled")
         self.filled.set(self._filled_want if ok else False)
+        self._photo_apply()
 
     # ---------- widget helpers ----------
     def _entry(self, f, r, label, default=""):
@@ -613,7 +740,32 @@ class App:
             datetime.datetime.strptime(self.start.get().strip().upper(), "%I:%M %p")
         except ValueError:
             return "Start time must look like 06:30 PM."
+        if self.photo_mode.get():
+            if not self._picked_photos():
+                return "Photo mode is on but no photographs have been added."
+            if self._photo_numbers()[2]:
+                return self._photo_numbers()[2]
         return self._preview_frac()[1]
+
+    def _photo_numbers(self):
+        """(interval, scrim, error). Both are typed, so both are checked here
+        rather than left to fail deep inside a render."""
+        try:
+            iv = float(self.interval.get().strip())
+        except ValueError:
+            return 0, 0, ("Seconds per photo must be a number, not "
+                          f"'{self.interval.get().strip()}'.")
+        if iv < lss_photo.MIN_INTERVAL:
+            return 0, 0, ("Seconds per photo must be at least "
+                          f"{lss_photo.MIN_INTERVAL:g}.")
+        try:
+            sc = float(self.scrim.get().strip())
+        except ValueError:
+            return 0, 0, ("Slate scrim must be a number between 0 and 1, not "
+                          f"'{self.scrim.get().strip()}'.")
+        if not 0.0 <= sc <= 1.0:
+            return 0, 0, "Slate scrim must be between 0 and 1."
+        return iv, sc, None
 
     def _preview_frac(self):
         """(fraction, error). --progress as a percentage, since that is how a
@@ -710,8 +862,14 @@ class App:
                 return
         scene = lss_presets.series_scene(self.series.get(), PRESETS)
         frac = self._preview_frac()[0]
-        err = lss_scene.check(scene, self.style.get(), int(self.rows.get()),
-                              bool(self.filled.get()), frac)
+        if self.photo_mode.get():
+            # only what the window can still get wrong: every silhouette
+            # control is greyed out in photo mode, so it cannot be asked for
+            err = lss_photo.check({"progress": frac,
+                                   "slate_scope": self.scope.get()})
+        else:
+            err = lss_scene.check(scene, self.style.get(), int(self.rows.get()),
+                                  bool(self.filled.get()), frac)
         if err:
             messagebox.showwarning("Check the form", err[0].upper() + err[1:])
             return
@@ -752,6 +910,10 @@ class App:
             "full_chroma": bool(self.chroma.get()),
             "align_loud": bool(self.align.get()),
             "height_stat": "peak" if self.peak.get() else "rms",
+            "photos": self._picked_photos(),
+            "photo_interval": self._photo_numbers()[0],
+            "slate_scope": self.scope.get(),
+            "scrim": self._photo_numbers()[1],
             "thumb_only": bool(self.thumbonly.get()),
             "cover": bool(self.cover.get()),
             "slate_mono": bool(self.mono.get()),
