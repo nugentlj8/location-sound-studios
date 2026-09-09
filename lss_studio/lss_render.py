@@ -12,7 +12,12 @@ import argparse, calendar, datetime, json, math, os, shutil, subprocess, sys, ti
 import numpy as np
 import lss_presets as presets_mod
 import lss_draw as D
-import lss_photo as photo_mod
+try:
+    import lss_photo as photo_mod
+except ImportError:                  # see lss_update.missing(): an update that
+    photo_mod = None                 # predates this module leaves it absent
+                                     # for one launch, and the app must still
+                                     # start so the updater can fetch it
 import lss_scene as scene_mod
 from PIL import Image, ImageDraw, ImageFont, ImageStat
 
@@ -527,6 +532,8 @@ def _cover(cfg, db, lv, style, scale, dyn, out):
                    time_text=cfg["start"], played=True, save=D.png_meta())
 
 
+PHOTO_INTERVAL = getattr(photo_mod, "DEFAULT_INTERVAL", 180.0)
+SLATE_SCOPES = getattr(photo_mod, "SLATE_SCOPES", ["both", "thumbnail", "none"])
 SCRIM_DEFAULT = 0.65             # how heavy the wash behind the slate is on a
                                  # photo. Set from the worst case rather than
                                  # by eye: a near-white hazy sky under the
@@ -1175,7 +1182,7 @@ def _run_photo(cfg, slug, outdir, work, progress, on_progress, stage):
         if note:
             progress(f"  {os.path.basename(p)}: {note}")
 
-    interval = float(cfg.get("photo_interval", photo_mod.DEFAULT_INTERVAL))
+    interval = float(cfg.get("photo_interval", PHOTO_INTERVAL))
     segs, unique = photo_mod.plan(dur, len(photos), interval)
     progress(f"{len(photos)} photos on a {interval:g}s cycle: {len(segs)} "
              f"segments over {dur / 60:.1f} min, "
@@ -1284,6 +1291,11 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     # Photos are checked before anything is created. Every other early failure
     # in here leaves an empty render folder behind and that has never mattered;
     # a mistyped photo path is the one somebody will actually hit.
+    if cfg.get("photos") and photo_mod is None:
+        raise SystemExit(
+            "Photo mode needs lss_photo.py and this installation does not have "
+            "it yet. Restart the app once to let the updater fetch it, or run: "
+            "py lss_studio/lss_update.py --repair")
     if cfg.get("photos"):
         t = _photo_targets(cfg)
         progress("Checking photos against "
@@ -1570,9 +1582,9 @@ def main():
                         "centre-cropped to the frame and downscaled; one that "
                         "is too small is an error, never an upscale")
     g.add_argument("--photo-interval", type=float,
-                   default=photo_mod.DEFAULT_INTERVAL, metavar="SECONDS",
+                   default=PHOTO_INTERVAL, metavar="SECONDS",
                    help=f"how long each photo holds before the next "
-                        f"(default {photo_mod.DEFAULT_INTERVAL:g}). The cycle "
+                        f"(default {PHOTO_INTERVAL:g}). The cycle "
                         "repeats until the audio is covered and the last "
                         "segment is cut to the audio's end")
     g.add_argument("--scrim", type=float, default=SCRIM_DEFAULT,
@@ -1619,7 +1631,7 @@ def main():
                         "as the finished fully-played frame. Adds about half a "
                         "second and composes with everything else")
     g.add_argument("--slate-scope", default="both",
-                   choices=photo_mod.SLATE_SCOPES,
+                   choices=SLATE_SCOPES,
                    help="which outputs carry the slate in photo mode: both, "
                         "thumbnail (the images get it, the video stays bare), "
                         "or none. Photo mode only - a generated render always "
@@ -1665,7 +1677,12 @@ def main():
     if n.color_preset not in presets_mod.color_preset_names(P):
         a.error(f"--colors: unknown preset '{n.color_preset}'. Choose from: "
                 + ", ".join(presets_mod.color_preset_names(P)))
-    photos = photo_mod.collect(n.photos)
+    photos = photo_mod.collect(n.photos) if photo_mod else (
+        [n.photos] if n.photos.strip() else [])
+    if photos and photo_mod is None:
+        a.error("--photos needs lss_photo.py and this installation does not "
+                "have it yet. Restart the app once to let the updater fetch "
+                "it, or run: py lss_studio/lss_update.py --repair")
     if photos:
         # read off the RAW namespace, before any series default is written
         # back over a flag - otherwise every render would look as though it

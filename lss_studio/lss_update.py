@@ -107,6 +107,53 @@ def update(log=print):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def missing():
+    """Files this install should have but does not.
+
+    update() fetches the list the RUNNING updater declares, so a release that
+    ADDS a module cannot deliver it in the same hop: the new lss_update.py
+    lands in that update, and only then does this install know the file exists
+    at all. Until 1.11.0 nothing had ever been added to FILES, so the gap had
+    never opened - and it opens silently, because py_compile verifies each file
+    on its own and never executes an import.
+
+    This is what closes it, on the launch after. It is deliberately driven off
+    the LOCAL list rather than a list fetched from GitHub: the remote is then
+    only ever asked for files this installed code already names, so a bad
+    remote cannot introduce a filename of its own.
+    """
+    return [n for n in FILES if not os.path.exists(os.path.join(HERE, n))]
+
+
+def repair(log=print, timeout=8):
+    """Fetch whatever missing() reports. Returns the names actually restored.
+
+    Same order as update(): download and verify everything first, then move it
+    into place, so a half-finished repair never lands.
+    """
+    names = missing()
+    if not names:
+        return []
+    tmp = tempfile.mkdtemp(prefix="lss_fix_")
+    try:
+        import py_compile
+        for name in names:
+            path = os.path.join(tmp, name)
+            with open(path, "wb") as fh:
+                fh.write(_get(f"{RAW}/{name}", timeout))
+            if name.endswith(".py"):
+                py_compile.compile(path, doraise=True)
+        for name in names:
+            shutil.copy2(os.path.join(tmp, name), os.path.join(HERE, name))
+        log("Restored missing file(s): " + ", ".join(names))
+        return names
+    except Exception as e:
+        log("Could not restore missing files. (" + str(e) + ")")
+        return []
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def rollback(log=print):
     """Restore the previous version if one was kept."""
     prev = os.path.join(HERE, "previous")
@@ -124,6 +171,9 @@ def rollback(log=print):
 if __name__ == "__main__":
     if "--rollback" in sys.argv:
         rollback()
+    elif "--repair" in sys.argv:
+        print("Missing:", ", ".join(missing()) or "nothing")
+        repair()
     else:
         newer = check()
         if newer:
@@ -131,3 +181,5 @@ if __name__ == "__main__":
             update()
         else:
             print(f"Up to date (version {local_version()}).")
+            if missing():
+                repair()

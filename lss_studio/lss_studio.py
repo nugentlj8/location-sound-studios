@@ -11,7 +11,11 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 import lss_render
-import lss_photo
+try:
+    import lss_photo
+except ImportError:                  # one launch behind the updater - see
+    lss_photo = None                 # lss_update.missing(). The Photo tab
+                                     # says so rather than the app not opening
 import lss_presets
 import lss_scene
 try:
@@ -323,16 +327,25 @@ class App:
         # ---------- photo: stills instead of a generated silhouette ----------
         pr = 0
         self.photo_mode = tk.BooleanVar(value=False)
-        ttk.Checkbutton(photo, text="Use photographs instead of a generated "
-                                    "silhouette",
-                        variable=self.photo_mode,
-                        command=self._photo_mode_changed).grid(
-            row=pr, column=1, sticky="w", pady=4)
+        self.photobox = ttk.Checkbutton(
+            photo, text="Use photographs instead of a generated silhouette",
+            variable=self.photo_mode, command=self._photo_mode_changed)
+        self.photobox.grid(row=pr, column=1, sticky="w", pady=4)
         pr += 1
         ttk.Label(photo, text="The recording decides how long the cycle runs; "
                               "the photos decide what is on screen. Nothing "
                               "on Look or Shape applies, so those grey out.",
                   foreground=MUTED).grid(row=pr, column=1, sticky="w", pady=(0, 10))
+        if lss_photo is None:
+            # an update that predates lss_photo.py leaves it missing for one
+            # launch; the updater fetches it on the next one
+            self.photobox.config(state="disabled")
+            ttk.Label(photo, text="Photo mode arrives with the next restart — "
+                                  "this copy updated before the module "
+                                  "existed. Close and reopen the app.",
+                      foreground=ACC).grid(row=pr, column=1, sticky="w",
+                                           pady=(0, 10))
+            pr += 1
         pr += 1
         ttk.Label(photo, text="Photos").grid(row=pr, column=0, sticky="nw", pady=4)
         holder = ttk.Frame(photo)
@@ -356,7 +369,7 @@ class App:
                   foreground=MUTED).grid(row=pr, column=1, sticky="w", pady=(0, 8))
         pr += 1
         self.interval = self._entry(photo, pr, "Seconds per photo",
-                                    f"{lss_photo.DEFAULT_INTERVAL:g}")
+                                    f"{lss_render.PHOTO_INTERVAL:g}")
         pr += 1
         self.scrim = self._entry(photo, pr, "Slate scrim",
                                  f"{lss_render.SCRIM_DEFAULT:g}")
@@ -403,7 +416,8 @@ class App:
         ttk.Label(act, text="Slate on").pack(side="left", padx=(16, 6))
         self.scope = tk.StringVar(value="both")
         self.scopebox = ttk.Combobox(act, textvariable=self.scope, width=10,
-                                     state="disabled", values=lss_photo.SLATE_SCOPES)
+                                     state="disabled",
+                                     values=lss_render.SLATE_SCOPES)
         self.scopebox.pack(side="left")
         ttk.Label(act, text="Preview at").pack(side="left", padx=(20, 6))
         self.preview = ttk.Entry(act, width=5)
@@ -440,6 +454,19 @@ class App:
                 newer = None
             if newer:
                 self.q.put(("update", newer))
+                return
+            # Nothing newer - but an earlier update may have installed a
+            # version whose file list this copy did not yet know about, and a
+            # file it never fetched is still missing. Version checks alone
+            # would never notice, because the version is already correct.
+            try:
+                if lss_update.missing():
+                    got = lss_update.repair(
+                        log=lambda m: self.q.put(("log", m)))
+                    if got:
+                        self.q.put(("repaired", got))
+            except Exception:
+                pass
         threading.Thread(target=worker, daemon=True).start()
 
     def _series_changed(self, _evt=None):
@@ -687,6 +714,8 @@ class App:
                 self.say(payload)
             elif kind == "update":
                 self._offer_update(payload)
+            elif kind == "repaired":
+                self._offer_restart(payload)
             elif kind == "prog":
                 frac, eta = payload
                 self.bar["value"] = int(frac * 1000)
@@ -782,6 +811,19 @@ class App:
             return 1.0, "Preview must be between 0 and 100%."
         return v / 100.0, None
 
+    def _offer_restart(self, names):
+        """A repair landed files the running process has already tried to
+        import, so only a restart actually enables them."""
+        from tkinter import messagebox
+        if getattr(self, "_restart_offered", False):
+            return
+        self._restart_offered = True
+        if messagebox.askyesno(
+                "Finish updating",
+                "This copy was missing " + ", ".join(names)
+                + ", which has now been downloaded.\n\nRestart to finish?"):
+            self._relaunch()
+
     def _offer_update(self, version):
         from tkinter import messagebox
         if getattr(self, "_update_offered", False):
@@ -867,6 +909,8 @@ class App:
             # control is greyed out in photo mode, so it cannot be asked for
             err = lss_photo.check({"progress": frac,
                                    "slate_scope": self.scope.get()})
+            if err is None and lss_photo is None:
+                err = "photo mode is not installed yet"
         else:
             err = lss_scene.check(scene, self.style.get(), int(self.rows.get()),
                                   bool(self.filled.get()), frac)
