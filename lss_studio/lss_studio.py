@@ -336,6 +336,7 @@ class App:
                               "the photos decide what is on screen. Nothing "
                               "on Look or Shape applies, so those grey out.",
                   foreground=MUTED).grid(row=pr, column=1, sticky="w", pady=(0, 10))
+        pr += 1
         if lss_photo is None:
             # an update that predates lss_photo.py leaves it missing for one
             # launch; the updater fetches it on the next one
@@ -346,7 +347,6 @@ class App:
                       foreground=ACC).grid(row=pr, column=1, sticky="w",
                                            pady=(0, 10))
             pr += 1
-        pr += 1
         ttk.Label(photo, text="Photos").grid(row=pr, column=0, sticky="nw", pady=4)
         holder = ttk.Frame(photo)
         holder.grid(row=pr, column=1, sticky="ew", pady=4)

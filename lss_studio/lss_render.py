@@ -1696,7 +1696,7 @@ def main():
         # render would do nothing at all, and a flag that was typed and ignored
         # is only ever discovered by noticing it had no effect.
         for flag, val, dflt in (("--photo-interval", n.photo_interval,
-                                 photo_mod.DEFAULT_INTERVAL),
+                                 PHOTO_INTERVAL),
                                 ("--scrim", n.scrim, SCRIM_DEFAULT),
                                 ("--slate-scope", n.slate_scope, "both")):
             if val != dflt:
