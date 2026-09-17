@@ -6,3 +6,5 @@ renders/
 *.mp4
 *.wav
 *.flac
+*.mov
+*.MOV
