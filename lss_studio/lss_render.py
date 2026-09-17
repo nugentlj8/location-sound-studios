@@ -1703,6 +1703,55 @@ def _video_sidecar(cfg, info, worst, where, when, samples, out):
     }
 
 
+def audio_validate(path):
+    """Refuse an audio file with no audio in it, before anything is built.
+
+    probe_duration() answers with a number for anything that has a duration -
+    a silent video among them - so every mode here would sail past the
+    pre-flight and fail much later. A looped render fails at the FINAL MUX,
+    where -map 1:a matches no stream, which is after every encode has run: on a
+    two and a half hour render that is twenty-five minutes of work thrown away
+    for a mistyped path. The generated and photo modes fare no better, decoding
+    an empty PCM stream into an envelope with nothing in it.
+
+    Checked here for the same reason lss_photo.validate() checks its stills
+    here: the error is worth nothing once the folder exists and the encoder has
+    started.
+    """
+    if not os.path.exists(path):
+        raise SystemExit(f"audio: file not found: {path}")
+    if not shutil.which("ffprobe"):
+        raise SystemExit("ffprobe not found on PATH. It ships with ffmpeg; "
+                         "run Setup.bat to install both.")
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
+         "stream=codec_name,channels,sample_rate", "-of", "json", path],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"audio: cannot read {os.path.basename(path)}\n  "
+                         + (r.stderr or "").strip()[-400:])
+    try:
+        streams = json.loads(r.stdout).get("streams") or []
+    except Exception:
+        streams = []
+    if not streams:
+        # name what IS in there, because the usual cause is the right path to
+        # the wrong kind of file - a clip passed where the recording goes
+        v = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
+             "-of", "csv=p=0", path], capture_output=True, text=True)
+        kinds = sorted({k.strip() for k in (v.stdout or "").split() if k.strip()})
+        raise SystemExit(
+            f"audio: {os.path.basename(path)} has no audio stream.\n"
+            f"  It contains: {', '.join(kinds) if kinds else 'no streams at all'}.\n"
+            "  This is the recording the render is built from - a FLAC or WAV. "
+            "A video clip goes in --video.")
+    s = streams[0]
+    return {"codec": s.get("codec_name") or "",
+            "channels": s.get("channels") or 0,
+            "sample_rate": s.get("sample_rate") or ""}
+
+
 def video_validate(src):
     """Probe the clip and refuse it now if it cannot carry the slate.
 
@@ -2401,6 +2450,13 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     if cfg.get("video"):
         # same rule, same place: refused before a folder exists to leave behind
         cfg["_video_info"] = video_validate(cfg["video"])
+    # ...and the recording itself, wherever one is used. A bare --video render
+    # is the only mode that takes none.
+    if cfg.get("audio"):
+        cfg["_audio_info"] = audio_validate(cfg["audio"])
+        a = cfg["_audio_info"]
+        progress(f"Audio: {os.path.basename(cfg['audio'])}  {a['codec']}, "
+                 f"{a['channels']}ch, {a['sample_rate']} Hz")
 
     # degrade an unmounted network path here rather than in the GUI, so the CLI
     # stays usable off the studio's network too instead of dying in makedirs
