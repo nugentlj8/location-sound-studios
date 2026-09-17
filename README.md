@@ -705,6 +705,195 @@ Crossfades between photos, Ken Burns motion and per-photo grading are all out �
 They are not simply deferred: each makes every frame unique and forces a full-runtime encode, which
 takes a three-hour render from about six minutes back to thirty or more.
 
+## The slate over your own footage
+
+A third mode, and the smallest one: take a clip you shot, burn the slate onto it, write it back out.
+One video in, one video out. No generated skyline, no photo cycle, no audio.
+
+```
+py lss_studio\lss_render.py --video "C:\clips\IMG_3187.MOV" --slate-time 18:30 ^
+   --place "Downtown Phoenix" --city "Phoenix, AZ" --conditions "Clear 94F"
+```
+
+`--video` turns the mode on and `--slate-time` is the time frozen on the slate — typed as 24-hour
+`HH:MM`, drawn in the house `06:30 PM` form. There is **no audio argument**: the camera audio is
+stripped and the real audio gets muxed in later.
+
+Command line only for now; there is no tab for it in the window.
+
+### What it preserves, and what it refuses
+
+The clip's resolution and frame rate come out exactly as they went in. Nothing is resized, scaled or
+resampled — `--width`, `--height`, `--fps` and `--thumb-width` are all errors here, because there is
+nothing for them to decide.
+
+Two sources are refused outright rather than rendered badly:
+
+- **Narrower than 1280px.** Nothing would be upscaled — the slate is vector and scales to any
+  size — but 1280 is the design basis every margin and type size in it is written against, and
+  below that the layout is being shrunk past anything it was ever checked at.
+- **Taller than it is wide.** The slate is laid out across the top of a landscape frame. On a
+  vertical clip it centres in the middle of the shot, which looks deliberate and is not.
+
+A phone clip shot upright is stored landscape with a rotation tag, and that tag is read: the check
+and the overlay both use the size the clip actually *displays* at, not the size it is stored at.
+
+As with photo mode, everything that shapes a generated silhouette is an error rather than quietly
+ignored — `--style`, `--scale`, `--dynamics`, `--towers`, `--detail`, `--rows`, `--filled`,
+`--weather`, `--stars`, `--variants`, `--cover`, `--thumb-only` and a part-way `--progress`. What is
+left is what the slate says and what colour it is: `--series`, `--number`, `--place`, `--city`,
+`--conditions`, `--theme`, `--colors`, `--background`, `--foreground`, `--accent`, `--slate-mono`,
+`--scrim` and `--slate-position`.
+
+### Moving the slate off the subject
+
+```
+--slate-position top      (default, the layout every other render uses)
+--slate-position middle
+--slate-position bottom
+```
+
+Footage has a subject and the slate can land on it — a title running through the one antenna the
+shot is about. The three positions move the whole slate block as a unit, in design units, so it
+scales with the frame exactly as it always did:
+
+| position | where the block sits |
+|---|---|
+| `top` | as now — the `city · conditions` line rides the frame's middle |
+| `middle` | the block centred on the frame's middle |
+| `bottom` | the block's last line an 84-unit margin off the bottom edge |
+
+Clip mode only for now. Photo and generated renders refuse it rather than ignoring it.
+
+### The scrim is off by default here
+
+Unlike photo mode, `--scrim` defaults to **0** for a clip. A photograph is one fixed frame and the
+wash is cheap insurance; footage often has a sky that already carries the text, and the wash then
+reads as a haze around it. Turn it on per shot when one needs it:
+
+```
+--slate-position bottom --scrim 0.5
+```
+
+The wash follows the slate. At `top` it is the same top-down gradient photo mode uses; at `bottom`
+it is anchored to the bottom edge and fades upward; at `middle` it is a band that fades out on both
+sides. Wherever the slate goes, the wash is behind it and nowhere else.
+
+### Contrast is checked across the clip, not on one frame
+
+Photo mode measures the slate's contrast on the still it is about to write. Footage does not hold
+still — a pan off a dark wall onto a bright sky, headlights crossing the lower third, a three-minute
+shot that starts at dusk and ends at night. So the check samples frames spread across the clip,
+roughly one every 15 seconds, and reports the worst it finds and when:
+
+```
+  slate contrast: worst of 14 samples 3.8:1 (city · conditions, at 96s)
+  WARNING: below 4.5:1. Raise --scrim, or move --slate-position off this part of the frame.
+```
+
+This matters most with the scrim off, which is now the default, and most of all at
+`--slate-position bottom`, where on a street clip the slate sits over moving traffic.
+
+**Read that number as a sampled minimum, not a guarantee.** It says "worst of N samples" because
+that is exactly what it is. Traffic and headlights change the tone under the text on a one-second
+timescale, and a sample every fifteen seconds will step straight over some of it. The check narrows
+the odds; it does not close them. Look at the render.
+
+### How it encodes
+
+The slate is one static image over moving video, so the whole thing is a single ffmpeg `overlay`
+pass. Two details in it are measured rather than assumed.
+
+The composite happens in **RGB**. Blending in the delivery format instead puts the slate's coloured
+text through a half-resolution chroma plane exactly where its glyph edges are — measured against the
+reference at 1.43 levels of mean error with peaks of 81. In RGB it is 0.005, peak 2. The frame is
+subsampled once, at the end, as the encoder was always going to.
+
+And the quality settings are **not** photo mode's. Those were measured on a held frame, where every
+other frame is a skip; moving footage inverts that. Measured on a 20s excerpt of a 3840×2160 30fps
+22.5 Mb/s phone clip — 56.3 MB of source:
+
+| CRF | size | bitrate | PSNR | SSIM |
+|---|---|---|---|---|
+| 14 | 89.7 MB | 35.9 Mb/s | 48.64 | 0.9944 |
+| 16 | 63.2 MB | 25.3 Mb/s | 48.26 | 0.9939 |
+| 18 | 43.7 MB | 17.5 Mb/s | 47.80 | 0.9933 |
+| **20** | **29.7 MB** | **11.9 Mb/s** | **47.22** | **0.9926** |
+| 22 | 19.7 MB | 7.9 Mb/s | 46.55 | 0.9917 |
+
+Eight CRF points buy 2.1 dB and cost 4.5× the bytes. The source has already been through HEVC, so
+its fine detail is gone before x264 ever sees it and the extra bitrate is spent being precise about
+someone else's compression artefacts. CRF 16 — what the generated renders ship at — writes *more*
+than the source it is copying. **CRF 20** writes 53% of it at 47.2 dB, and that is the default.
+
+Preset is `medium`. Measured the same way, `slow` costs 39% more time to save 3.0% of the bytes and
+`fast` saves 8% of the time for 0.5% more of them — neither trade is worth taking here.
+
+### Looping one clip to fill a recording
+
+Give it an audio file **as well as** `--video` and it loops the clip to the audio's length, with the
+slate on screen only at the start and the end:
+
+```
+py lss_studio\lss_render.py "Downtown Phoenix.flac" ^
+   --video "Downtown Phoenix.mp4" --slate-time 18:30 ^
+   --slate-intro 2 --slate-outro 2 ^
+   --place "Downtown Phoenix" --city "Phoenix, AZ" --conditions "Clear 94F"
+```
+
+The audio file is the switch. `--video` on its own is still one pass over one clip with the slate on
+throughout, unchanged.
+
+```
+--slate-intro MINUTES|all   default 2   (0 turns it off)
+--slate-outro MINUTES|all   default 2   (0 turns it off)
+--thumb-at SECONDS          default 0   (which frame the thumbnail comes from)
+```
+
+The slate fades in and out over a second rather than popping. `--slate-position` and `--scrim` carry
+through to the intro and outro exactly as they do to a single-pass render. Intro plus outro longer
+than the audio is an error, not a silent merge. The clip repeats with a hard cut at the seam and the
+last repeat is truncated to the audio's end. A thumbnail is written as usual, slated, from the frame
+`--thumb-at` names.
+
+### Why it is cheap
+
+The body of the render is the same clip over and over, so **it is encoded once** and every bare
+repeat points at that one file. Only the minutes that actually carry the slate get an encoder pass of
+their own, and the bare stretches inside a partly-slated repeat are **stream-copied** out of the body
+rather than re-encoded.
+
+The measured example — a 17.6 min clip under a 159.9 min recording, 2 min intro and outro:
+
+| | |
+|---|---|
+| concat entries | 12 |
+| encoder passes | 4 (the body, the intro, and the outro in two halves) |
+| stream copies | 2 |
+| footage encoded | 21.6 min for a 159.9 min output — **7.4× less** |
+
+A stream copy has to start on a keyframe, and that is guaranteed rather than hoped for: the cut
+points are worked out from the schedule *before* the body is encoded, then handed to x264 as
+`-force_key_frames`, so an I-frame lands exactly there. **Nothing around the slate boundaries is
+re-encoded.** The cost is two extra I-frames in a seventeen-minute encode.
+
+The fourth encoder pass is worth explaining, because it is not a mistake. 159.9 min over a 17.6 min
+clip is nine full repeats and an 84.8 s tail — and that tail is *shorter than the two-minute outro*,
+so the outro spans the end of one repeat and the start of the next. That is two source ranges, not
+one, and the repeat it clips stops being interchangeable with its neighbours. The slate does not fade
+at that seam; it is one continuous appearance that happens to live in two files.
+
+No `+faststart` on a looped render. It rewrites the file end to end to move the moov atom forward,
+which on a twenty-gigabyte output means reading and writing twenty gigabytes a second time for a
+benefit — progressive HTTP streaming — that a file being uploaded never collects.
+
+Scratch files go to **local temp**, not the output folder: the body encode plus the pieces cut out of
+it is several gigabytes written, read and deleted, and the output folder is routinely a network drive
+or a synced folder.
+
+The contrast check samples only the stretches that actually show the slate. Four minutes out of a
+hundred and sixty, so sixteen samples rather than six hundred and forty.
+
 ## Where renders go
 
 By default `Z:\Sounds of the City\LSS Renders`. To send one render somewhere else:

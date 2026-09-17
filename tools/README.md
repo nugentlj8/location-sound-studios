@@ -8,7 +8,7 @@ test audio if it is not there.
 
 | | |
 |---|---|
-| `identity_check.py` | renders the style/palette/state/stars matrix plus one video per style and SHAs them, to prove a change left every existing style byte-for-byte identical |
+| `identity_check.py` | renders the style/palette/state/stars matrix plus one video per style, the photo-mode set and the clip-mode set, and SHAs them all, to prove a change left every existing style byte-for-byte identical |
 | `weather_samples.py` | the weather review set — every style off/clouds/rain, the three palettes that decide the contrast rule, and Morning at thumbnail size on four seeds plus one with the cloud band forced onto the slate |
 | `stars_preview.py` | the 24-still star-field review set — both styles, both playback states, every palette that allows a field |
 | `encode_bench.py` | libx264 vs h264_nvenc vs av1_nvenc on the SAME layer PNGs and filter graph, timed interleaved, so the difference measured is the encoder and nothing else |
@@ -36,6 +36,17 @@ since 1.9.0, so a run without them tests half the shipped behaviour. The video
 cases hash the **decoded frames** rather than the mp4: a container carries
 metadata that moves between runs, so hashing the file would fail on every
 rebuild and prove nothing.
+
+Photo mode and clip mode generate their own sources the way the audio is
+generated — three seeded stills, and a clip that pans across one of them — so
+nothing large is committed and any machine reproduces them exactly. The looped
+cases run that 5s clip under the 20s audio, which is four repeats: enough to
+cover the body-encoded-once path, the stream copies cut out of it, and the
+`straddle` case where a 6s outro over a 5s clip puts the slate across a loop
+seam and splits it into two source ranges. A case the
+baseline does not have counts as new coverage, not a regression; a case the
+baseline HAS and the new run does not is still a failure, because that is
+coverage going quietly missing.
 
 Stash only `lss_studio/` when taking the baseline, or the harness reverts along
 with the code it is measuring:

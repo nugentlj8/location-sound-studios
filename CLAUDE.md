@@ -31,8 +31,10 @@ audio clip (or `--thumb-only` to skip the slow video encode) and inspect the out
 `tools/` holds the development scripts (not shipped by the updater, which only sends `lss_studio/`).
 When a change is meant to leave existing styles untouched, prove it rather than assert it:
 `py tools/identity_check.py baseline` on the old commit, `after` on the new one, then `compare` —
-187 cases - 180 style/palette/star/playback-state thumbnails plus 7 videos hashed on
-their DECODED frames rather than the container. See `tools/README.md`.
+213 cases: 180 style/palette/star/playback-state thumbnails, 7 generated videos, 10 photo-mode
+keys, 6 clip-mode ones and 10 looped ones, every video hashed on its DECODED frames rather than
+the container.
+See `tools/README.md`.
 
 ## Architecture
 
@@ -99,6 +101,62 @@ self-explanatory on reading, bar the alpha rule under Conventions):
      other frame a skip, the segment IS its keyframe. The audio pass is then the dominant cost of a
      long render, which is the right thing for it to be.
 
+  5g. `--video` burns the slate onto a supplied clip and branches at
+     `_run_video()`, ahead of photo mode's branch. One clip in, one clip out,
+     camera audio stripped: there is no envelope, no geometry, no playhead and
+     no still, so `_video_check()` refuses nearly the whole flag surface and
+     only what the slate SAYS and what colour it is survives. The reuse is
+     total — `_slate_overlay()` assembles `lss_draw.draw_scrim()` and
+     `draw_slate()` into ONE straight-alpha RGBA PNG and ffmpeg composites it
+     with a single `overlay`, because *over* is associative and so
+     slate-over-scrim-over-frame is the two-pass composite `_photo_frame()`
+     already makes onto a still. Two rules are load-bearing and both are
+     measured, not argued: the blend happens in **rgb** (`format=yuv420`
+     measures peaks of 81 levels on the accent runs, since the chroma plane is
+     half resolution exactly where the glyph edges are), and the layer is
+     un-premultiplied **once** at the end (0.005 MAE against the Pillow path;
+     the ffmpeg `blend` pair that would avoid it measures 0.372, worse, because
+     blend truncates where `ImageChops` rounds). The encode settings are the
+     one thing photo mode does **not** hand over — see `build_slate_video()`:
+     `photo_segment()`'s one-keyframe and free-CRF findings were measured on a
+     HELD frame and moving footage inverts both. `_video_legibility()` samples
+     across the clip rather than reading one frame, because footage changes
+     tone and a slate that reads at second 1 can vanish at second 40 — one
+     sample per ~15s, clamped to [5, 24], and the line it prints says "worst of
+     N samples" because a sampled minimum read as a guarantee is the way this
+     check would mislead.
+     The scrim's default is **per mode**, not per flag: `--scrim` parses to
+     `None` and `run()` settles it once through `scrim_default()` —
+     `SCRIM_DEFAULT` 0.65 for a photo, where one fixed frame makes the wash
+     cheap insurance, `VIDEO_SCRIM_DEFAULT` 0.0 for a clip, where a sky that
+     already carries the text turns the wash into a haze around it.
+     `--slate-position {top,middle,bottom}` moves the slate as a unit, and the
+     hook was already there: `draw_slate()` has taken a design-unit `dy` since
+     the cover, so the only change needed was that `slate_boxes()` used to
+     *derive* `dy` from `dh` internally instead of accepting it — which would
+     have left the city ceiling and the legibility check measuring the top of
+     the frame while the text sat somewhere else, and nothing in the output
+     would have shown it. `slate_dy()` is the one place the mapping lives and
+     both the drawing and the measuring go through it. The scrim is the piece
+     that did NOT generalise for free: `draw_scrim` was anchored to row 0, and
+     is now a band that fades on whichever edges it does not butt against,
+     reducing to the old top-down ramp exactly when the slate is at the top.
+  5h. An audio file alongside `--video` asks for a LOOPED render — `_run_loop()`, branching ahead of
+     `_run_video()` — where the clip repeats to fill the recording and the slate shows only for
+     `--slate-intro` / `--slate-outro` minutes at each end. `loop_plan()` is the whole idea and it is
+     the analogue of `lss_photo.plan()`: the body is the same clip every time, so it is encoded ONCE
+     and every bare repeat names that one file, while a bare stretch inside a partly-slated repeat is
+     **stream-copied** out of the body. Measured: a 17.6 min clip under a 159.9 min recording is 12
+     concat entries from 4 encoder passes and 2 copies — 21.6 min of footage for a 159.9 min output.
+     The copies can be copies because the cut points are known BEFORE the body is encoded and go to
+     x264 as `-force_key_frames`, so nothing around a slate boundary is re-encoded; that is the one
+     thing to preserve if this is ever restructured. The fourth pass is not slack: when the truncated
+     final repeat is shorter than the outro the slate STRADDLES a loop seam, which is two source
+     ranges and one repeat that is no longer interchangeable — and it must not fade at that seam,
+     since it is one appearance living in two files. `_work` goes to LOCAL temp here, not `outdir`,
+     because outdir is routinely a network drive and the scratch is several GB; and `+faststart` is
+     deliberately off, being a full rewrite of a 20 GB file for a benefit an upload never collects.
+     `_video_legibility(windows=...)` samples only the minutes that show the slate.
   6. `run()` is the orchestration entry point both the GUI and CLI call — writes the thumbnail, the
      video (unless `--thumb-only`), and a `<slug>_render.json` sidecar capturing every parameter used,
      so a past render can be understood or reproduced later. Output goes to a fresh
@@ -136,6 +194,9 @@ self-explanatory on reading, bar the alpha rule under Conventions):
   `_photo_apply()` only ever DISABLES, and runs at the end of `_style_changed`/`_colors_changed`/
   `_thumbonly_changed`, so it can never hand back what their finer greying just took away;
   `_photo_mode_changed` is the one that restores, and it restores before calling them.
+  `--video` (5g) is deliberately **not** here: it is CLI-only for now, so the usual rule that a
+  setting goes in the matching group on both sides does not yet apply to it. Adding it means a
+  seventh tab and a fourth thing for `_photo_apply()`'s disable-only discipline to agree with.
 
 - **`lss_photo.py`** — photo-background mode: a supplied set of stills cycling on a fixed interval
   in place of the generated skyline. It is a **mode, not a style**, and the reason is the style
@@ -188,10 +249,12 @@ and every running copy of the app picks it up on its next launch via `lss_update
   toward its own sky. The direction falls out — the foreground is on the lighter side of the sky
   in eight presets and the darker side in Mist, so Mist's clouds darken with no special case.
 - Alpha is the exception, not the rule. Everything draws onto an opaque RGB canvas at `SS` and
-  downsamples, which is why `mix()` exists instead of transparency. The two places that genuinely
-  need alpha are `draw_rain()` (an `L` mask) and photo mode's `slate_over()`. In the latter,
+  downsamples, which is why `mix()` exists instead of transparency. The places that genuinely
+  need alpha are `draw_rain()` (an `L` mask), photo mode's `slate_over()`, and clip mode's
+  `_slate_overlay()`. In the last two,
   premultiply and then downsample the coverage as an **L** image and the colour as an **RGB** one,
-  SEPARATELY. Handing Pillow one premultiplied RGBA image and resizing that is the obvious way to
+  SEPARATELY — `lss_draw.premultiplied()` is the one implementation of that rule and both go
+  through it. Handing Pillow one premultiplied RGBA image and resizing that is the obvious way to
   write it and it is wrong: LANCZOS' negative lobes push colour above alpha at a glyph edge and the
   composite overshoots into a bright fringe. Measured mean absolute error against the opaque path
   over a flat sky - separate channels 0.15 levels, one RGBA resize 3.3 to 4.6 with peaks past 250.

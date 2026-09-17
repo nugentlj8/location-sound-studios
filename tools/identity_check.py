@@ -100,6 +100,48 @@ PHOTO_VIDEO_CASES = [
 ]
 PHOTO_INTERVAL = 7.0
 
+# ---- the slate over a source clip -----------------------------------------
+# Added in 1.12.0, and NEW cases again rather than a change to the 197 above:
+# clip mode shares draw_slate and draw_scrim with photo mode and nothing else.
+CLIP = os.path.join(RENDERS, "_identity_clip.mp4")
+CLIP_W, CLIP_H, CLIP_SECS = 1920, 1080, 5.0
+# Scrim at both ends of its range, because the no-scrim branch skips the
+# premultiplied under() step entirely and the layer is then the slate alone;
+# and the mono slate, because it is the one switch that changes which of the
+# three colours the runs are drawn in.
+VIDEO_CASES_OVER = [
+    ("default", {}),
+    ("noscrim", {"scrim": 0.0}),
+    ("mono", {"slate_mono": True}),
+    # --slate-position, added in the same 1.12.0. 'top' is covered by the three
+    # above; these are the two that move the block, and the last one is the
+    # only case that draws the wash anywhere but anchored to the top edge -
+    # without it the scrim band generalisation has no coverage at all.
+    # The base cfg below pins scrim at 0.65, so 'middle' exercises the band
+    # that fades on BOTH sides. Bottom is run at both ends of the scrim:
+    # 0.0 is what clip mode now defaults to, and 0.65 is the only case anywhere
+    # that anchors the wash to the bottom edge and fades it upward.
+    ("middle", {"slate_position": "middle"}),
+    ("bottom", {"slate_position": "bottom", "scrim": 0.0}),
+    ("bottom-scrim", {"slate_position": "bottom", "scrim": 0.65}),
+]
+
+# ---- looping one clip to fill an audio track ------------------------------
+# The 5s clip under the 20s audio is 4 repeats, which is enough to exercise
+# every path: the body encoded once and reused, bare stretches stream-copied
+# out of it, and the slate scheduled at each end. 'straddle' is the case that
+# matters most - a 6s outro over a 5s clip puts the slate across a loop seam,
+# so it becomes TWO source ranges and one repeat stops being interchangeable
+# with its neighbours.
+VIDEO_LOOP_CASES = [
+    ("schedule", {"slate_intro": "0.05", "slate_outro": "0.05"}),
+    ("intro-only", {"slate_intro": "0.05", "slate_outro": "0"}),
+    ("straddle", {"slate_intro": "0.05", "slate_outro": "0.1"}),
+    ("all", {"slate_intro": "all", "slate_outro": "0"}),
+    ("bottom", {"slate_intro": "0.05", "slate_outro": "0.05",
+                "slate_position": "bottom", "scrim": 0.65}),
+]
+
 SERIES_FOR = {"nature": "Sounds of Nature", "town": "Sounds of the City"}
 
 
@@ -211,6 +253,80 @@ def render_photo_cases(out, presets):
         print(f"  {key}  {out[key][:16]}")
 
 
+def make_clip():
+    """A deterministic source clip: a slow pan across one generated photo.
+
+    Photographic rather than synthetic on purpose - the legibility pass reads
+    real luminance under the slate, and a flat test pattern would exercise none
+    of it. Panning rather than held, because the whole reason this mode does
+    not inherit photo_segment's encode settings is that the content MOVES.
+    """
+    if os.path.exists(CLIP):
+        return CLIP
+    src = make_photos()[0]
+    # x drifts across the source over the clip's length; the crop window is the
+    # output size, so nothing is scaled and the pan is whole pixels
+    span = PHOTO_W - CLIP_W
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-loop", "1", "-framerate", "30",
+         "-i", src, "-t", str(CLIP_SECS),
+         "-vf", f"crop={CLIP_W}:{CLIP_H}:'{span}*t/{CLIP_SECS}':"
+                f"{(PHOTO_H - CLIP_H) // 2},format=yuv420p",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+         "-fps_mode", "cfr", CLIP],
+        check=True)
+    return CLIP
+
+
+def render_video_cases(out, presets):
+    """The clip-mode half. Adds keys; touches none of the 197 above."""
+    make_clip()
+    for tag, extra in VIDEO_CASES_OVER:
+        key = f"VIDEOOVER_{tag}"
+        series = "Sounds of the City"
+        name, base = P.resolve(series, "None (use series colour)", presets, None)
+        bg, fg, acc = P.resolve_colors("Night", "None (use series colour)",
+                                       presets, base, None)
+        cfg = {
+            "series": name, "place": "DOWNTOWN PHOENIX", "city": "PHOENIX",
+            "conditions": "CLEAR 94F", "number": "7", "number_style": "No.",
+            "background": bg, "foreground": fg, "accent": acc,
+            "color_preset": "Night", "geometry": P.series_geometry(series, presets),
+            "video": CLIP, "slate_time": "06:30 PM",
+            "scrim": R.SCRIM_DEFAULT, "slate_mono": False,
+            "outdir": OUT, "outname": key,
+        }
+        cfg.update(extra)
+        r = R.run(cfg, progress=lambda s: None)
+        out[key] = sha_frames(r["video"])
+        print(f"  {key}  {out[key][:16]}")
+
+
+def render_loop_cases(out, presets):
+    """The looped half. Adds keys; touches none of the 203 above."""
+    make_clip()
+    for tag, extra in VIDEO_LOOP_CASES:
+        key = f"VIDEOLOOP_{tag}"
+        series = "Sounds of the City"
+        name, base = P.resolve(series, "None (use series colour)", presets, None)
+        bg, fg, acc = P.resolve_colors("Night", "None (use series colour)",
+                                       presets, base, None)
+        cfg = {
+            "series": name, "place": "DOWNTOWN PHOENIX", "city": "PHOENIX",
+            "conditions": "CLEAR 94F", "number": "7", "number_style": "No.",
+            "background": bg, "foreground": fg, "accent": acc,
+            "color_preset": "Night", "geometry": P.series_geometry(series, presets),
+            "video": CLIP, "audio": VIDEO_AUDIO, "slate_time": "06:30 PM",
+            "scrim": 0.0, "slate_mono": False, "thumb_at": 0.0,
+            "thumb_width": 1280, "outdir": OUT, "outname": key,
+        }
+        cfg.update(extra)
+        r = R.run(cfg, progress=lambda s: None)
+        out[key] = sha_frames(r["video"])
+        out[key + "_thumb"] = sha(r["thumbnail"])
+        print(f"  {key}  {out[key][:16]}  thumb {out[key + '_thumb'][:16]}")
+
+
 def sha(path):
     return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
@@ -309,6 +425,12 @@ def render_all(tag):
 
     # ---- photo mode ---------------------------------------------------
     render_photo_cases(out, presets)
+
+    # ---- the slate over a source clip ---------------------------------
+    render_video_cases(out, presets)
+
+    # ---- looping one clip to fill an audio track ----------------------
+    render_loop_cases(out, presets)
 
     path = os.path.join(RENDERS, f"identity_{tag}.json")
     json.dump(out, open(path, "w"), indent=2)

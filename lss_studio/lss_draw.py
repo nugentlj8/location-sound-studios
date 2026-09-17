@@ -858,8 +858,8 @@ SCRIM_FADE = 190.0               # design units the wash takes to ease from full
                                  # spans a quarter of the frame's height
 
 
-def draw_scrim(W, H, strength, col, hold, fade):
-    """A vertical wash from the top of the frame, as its own RGBA layer.
+def draw_scrim(W, H, strength, col, hold, fade, top=0.0):
+    """A vertical wash behind the slate, as its own RGBA layer.
 
     A photograph puts arbitrary luminance under the slate. The palettes never
     do - their colours were chosen against measured contrast on rendered frames
@@ -876,29 +876,36 @@ def draw_scrim(W, H, strength, col, hold, fade):
     Smoothstep rather than linear over the fade, so there is no visible line
     where the hold ends. Painted in the palette's own background rather than
     black, so a render keeps its sky even where a photograph is doing the work.
+
+    The wash is a BAND, `top` to `hold`, that fades over `fade` on whichever
+    edges it does not butt against - so it follows the slate wherever
+    --slate-position puts it. `top` defaults to 0, which butts the band against
+    the frame's top edge and leaves the single downward fade this has always
+    drawn; a slate at the bottom asks for a band ending at H and fading only
+    upward, and one in the middle for a band that fades on both sides.
     """
-    hold = max(0, int(round(hold)))
+    y0 = max(0, int(round(top)))
+    y1 = max(y0, int(round(hold)))
     fade = max(1, int(round(fade)))
-    n = min(H, hold + fade)
-    ramp = Image.new("L", (1, n))
     vals = []
-    for i in range(n):
-        if i <= hold:
-            v = 1.0
+    for i in range(H):
+        if i < y0:
+            t = (y0 - i) / float(fade)
+        elif i <= y1:
+            t = 0.0
         else:
-            t = (i - hold) / float(fade)
-            v = 1.0 - t * t * (3.0 - 2.0 * t)
+            t = (i - y1) / float(fade)
+        v = 0.0 if t >= 1.0 else 1.0 - t * t * (3.0 - 2.0 * t)
         vals.append(int(round(255 * strength * v)))
+    ramp = Image.new("L", (1, H))
     ramp.putdata(vals)
-    a = Image.new("L", (W, H), 0)
-    a.paste(ramp.resize((W, n), Image.BILINEAR), (0, 0))
     layer = Image.new("RGBA", (W, H), rgb(col) + (0,))
-    layer.putalpha(a)
+    layer.putalpha(ramp.resize((W, H), Image.BILINEAR))
     return layer
 
 
-def scrim_over(base, W, H, k, strength, col, hold):
-    """The wash alone, applied to the photo at final size.
+def scrim_over(base, W, H, k, strength, col, hold, top=0.0):
+    """The wash alone, applied to the photo or the sampled frame at final size.
 
     Not supersampled, and it does not need to be: it is a smooth vertical
     gradient with no edge anywhere in it to alias. One blend at 1:1 instead of
@@ -910,11 +917,38 @@ def scrim_over(base, W, H, k, strength, col, hold):
     of that band contains - measuring the finished frame reported 1.9:1 for a
     slate actually sitting at 3.5:1, because the near-white text was averaged
     into its own background.
+
+    `hold` and `top` are the band's edges in design units - see draw_scrim.
     """
     if strength <= 0 or hold <= 0:
         return base
-    layer = draw_scrim(W, H, strength, col, hold * k, SCRIM_FADE * k)
+    layer = draw_scrim(W, H, strength, col, hold * k, SCRIM_FADE * k, top * k)
     return Image.alpha_composite(base.convert("RGBA"), layer).convert("RGB")
+
+
+def premultiplied(layer, W, H):
+    """An SS-sized RGBA layer as (premultiplied RGB, coverage L) at final size.
+
+    The two halves are downsampled SEPARATELY and that is the whole point of
+    the function. Handing Pillow one premultiplied RGBA image and resizing
+    that is the obvious way to write it and it is wrong: LANCZOS has negative
+    lobes, at a glyph edge they push the colour above the alpha, and the
+    composite then overshoots into a bright fringe. Measured against the opaque
+    path over a flat sky, in levels of mean absolute error - separate channels
+    0.15, one RGBA resize 3.3 to 4.6, with peaks of 146 to 253 where a stroke
+    turns.
+
+    Lifted out of slate_over() unchanged so that lss_render can build the same
+    pair for a layer it hands to ffmpeg rather than compositing here. Same
+    expressions, same order: there is one implementation of this rule and both
+    callers use it.
+    """
+    r, g, b, a = layer.split()
+    pm = Image.merge("RGB", (ImageChops.multiply(r, a),
+                             ImageChops.multiply(g, a),
+                             ImageChops.multiply(b, a))).resize(
+                                 (W, H), Image.LANCZOS)
+    return pm, a.resize((W, H), Image.LANCZOS)
 
 
 def slate_over(base, cfg, W, H, k, dy, number, time_text, fg, slate, font_path):
@@ -940,12 +974,7 @@ def slate_over(base, cfg, W, H, k, dy, number, time_text, fg, slate, font_path):
     layer = Image.new("RGBA", (W * SS, H * SS), (0, 0, 0, 0))
     draw_slate(ImageDraw.Draw(layer), cfg, W, k, dy, number, time_text,
                fg, slate, font_path)
-    r, g, b, a = layer.split()
-    pm = Image.merge("RGB", (ImageChops.multiply(r, a),
-                             ImageChops.multiply(g, a),
-                             ImageChops.multiply(b, a))).resize(
-                                 (W, H), Image.LANCZOS)
-    am = a.resize((W, H), Image.LANCZOS)
+    pm, am = premultiplied(layer, W, H)
     inv = ImageChops.invert(am)
     keep = ImageChops.multiply(base.convert("RGB"),
                                Image.merge("RGB", (inv, inv, inv)))

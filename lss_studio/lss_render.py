@@ -328,7 +328,7 @@ def _clouds_only(wx):
     return dict(wx, rain=None) if wx else wx
 
 
-def slate_boxes(cfg, dh=720.0):
+def slate_boxes(cfg, dh=720.0, dy=None):
     """Every run of slate text as (x0, x1, ink_bottom), in design units.
 
     Measured with the real font at the real sizes rather than estimated from a
@@ -339,9 +339,18 @@ def slate_boxes(cfg, dh=720.0):
     The slate is drawn in caps throughout, so a baseline IS the ink bottom -
     there is nothing below it to allow for. Positions mirror compose() exactly,
     at k=1; if the layout there moves, this has to move with it.
+
+    `dy` is the slate's vertical offset and it is ACCEPTED rather than derived.
+    It used to be computed here from `dh` alone, which was correct only while
+    the slate had one possible position: once --slate-position could move the
+    text, deriving it here would have left the ceiling and the legibility check
+    measuring the top of the frame while the text sat somewhere else - and
+    nothing in the rendered output would have shown it. Defaults to the
+    top-position value, which is the expression this line always held.
     """
     M = 84.0
-    dy = dh / 2.0 - 360.0            # the same slate move compose() makes, so
+    if dy is None:
+        dy = slate_dy(dh)            # the same slate move compose() makes, so
     out = []                         # the ceiling is measured off the real text
     n = format_number(cfg.get("number", ""), cfg.get("number_style", "No."))
     nw = D.text_width(n, 27.0, 11.0, FONT) if n else 0.0
@@ -544,6 +553,225 @@ SCRIM_DEFAULT = 0.65             # how heavy the wash behind the slate is on a
                                  # wash is the palette's own sky - so the cost
                                  # of setting it for the hard case is small
 
+# Where the slate block sits in the frame. The block itself never changes shape
+# - these move it as a unit, through the design-unit `dy` draw_slate has taken
+# since the cover - so every size, margin and tracking in it is untouched.
+SLATE_POSITIONS = ["top", "middle", "bottom"]
+SLATE_BLOCK_TOP = 123.0          # the series baseline (150) less its own size
+                                 # (27). Stated in DESIGN units rather than
+                                 # measured off the font: the real ink top is
+                                 # 131 with Barlow Condensed Bold, but a
+                                 # machine on the Arial fallback must not get a
+                                 # different layout
+SLATE_BLOCK_BOT = 368.0          # the last baseline (360) plus a descender
+                                 # allowance. slate_boxes() says a baseline IS
+                                 # the ink bottom because the slate is caps
+                                 # throughout, which is very slightly
+                                 # optimistic - the comma in "PHOENIX, AZ"
+                                 # drops 3 units under it
+SLATE_MARGIN = 84.0              # the same margin draw_slate already keeps on
+                                 # the left and right
+
+
+def slate_dy(dh=720.0, position="top"):
+    """The slate block's vertical offset in design units, for a dh-tall frame.
+
+    The ONE place the position mapping lives. Both the drawing (draw_slate) and
+    the measuring (slate_boxes, and so the legibility check and the city
+    ceiling) go through it, because the failure mode if they disagree is
+    invisible: the text moves and the measurements quietly stay where they were.
+
+    'top' is the layout every render has always had, and returns exactly the
+    expression each caller used to compute inline - 0.0 at 16:9, and the same
+    downward move at a square cover.
+    """
+    if position == "bottom":
+        return dh - SLATE_MARGIN - SLATE_BLOCK_BOT
+    if position == "middle":
+        return dh / 2.0 - (SLATE_BLOCK_TOP + SLATE_BLOCK_BOT) / 2.0
+    return dh / 2.0 - 360.0
+
+
+def scrim_band(dh, dy, ink_bottom, position="top"):
+    """The wash's band, (top, bottom) in design units, for a slate at `position`.
+
+    The band butts against whichever frame edge the slate is nearest and fades
+    on the other side; in the middle it fades on both. At 'top' that is
+    0 -> the slate's lowest ink, which is the single downward ramp the wash has
+    always been.
+    """
+    if position == "bottom":
+        return SLATE_BLOCK_TOP + dy, dh
+    if position == "middle":
+        return SLATE_BLOCK_TOP + dy, ink_bottom
+    return 0.0, ink_bottom
+
+
+# ----------------------------------------------------------------- slate over video
+VIDEO_MIN_W = 1280               # the slate's own design basis. Nothing is
+                                 # upscaled below it - the slate is vector and
+                                 # scales to any k - but every constant in
+                                 # draw_slate is being scaled DOWN past this
+                                 # point and the layout was never checked
+                                 # there, so it is an error rather than a
+                                 # quietly cramped frame
+VIDEO_SAMPLES = 5                # frames the legibility check reads across the
+                                 # clip. A still check reads one, and footage
+                                 # changes tone: a slate that reads at second 1
+                                 # can vanish at second 40
+VIDEO_CRF = 20                   # measured on the real clip, not carried over
+                                 # from photo_segment - see build_slate_video
+VIDEO_PRESET = "medium"
+VIDEO_SCRIM_DEFAULT = 0.0        # the wash is OFF for a clip, where photo mode
+                                 # holds it at 0.65. A photograph is one fixed
+                                 # frame and the wash is cheap insurance on it;
+                                 # footage usually has a sky that already
+                                 # carries the text, and the wash then reads as
+                                 # a haze around it. Turned on per shot instead
+VIDEO_SAMPLE_EVERY = 15.0        # seconds between legibility samples
+VIDEO_SAMPLES_MIN = 5
+VIDEO_SAMPLES_MAX = 24
+
+# Looping one clip to fill an audio track. The slate shows for the first and
+# last few minutes and nothing in between, which is what makes the body of the
+# render one encode reused N times - see build_loop_video.
+LOOP_FADE = 1.0                  # seconds the slate takes to arrive and leave
+SLATE_INTRO_DEFAULT = 2.0        # minutes
+SLATE_OUTRO_DEFAULT = 2.0
+
+
+def slate_window(val, dur, flag):
+    """--slate-intro/--slate-outro as SECONDS, from minutes or the word 'all'.
+
+    'all' is how the always-on comparison is asked for on a looped render:
+    there is no other way to say "the whole runtime" without knowing the
+    audio's length at the command line. It is not the expensive case - the
+    slate is static, so every full repeat is the same encode as every other.
+    """
+    s = str(val).strip().lower()
+    if s in ("all", "always"):
+        return float(dur)
+    try:
+        v = float(s)
+    except ValueError:
+        raise SystemExit(f"{flag}: '{val}' is not a number of minutes or 'all'.")
+    if v < 0:
+        raise SystemExit(f"{flag}: {v:g} is negative.")
+    return v * 60.0
+
+
+def loop_plan(dur, clip, intro=0.0, outro=0.0):
+    """The looped timeline as pieces, and the distinct passes behind them.
+
+    This is where the mode earns its keep. The body of the render is one clip
+    repeated, so it is encoded ONCE and every bare repeat points at that same
+    file; only the stretches that actually carry the slate need an encoder pass
+    of their own, and a bare stretch that is part of a repeat is cut out of the
+    body encode by STREAM COPY rather than re-encoded.
+
+    Returns (pieces, encodes, cuts, keyframes):
+      pieces    - the concat order, each naming the file it plays
+      encodes   - {key: piece} that need their own encoder pass
+      cuts      - {key: piece} that are stream copies out of the body
+      keyframes - source offsets the body encode must put a keyframe on, which
+                  is what lets those copies be copies
+
+    The awkward case, and it is not hypothetical: the outro window can STRADDLE
+    a loop seam, when the final truncated repeat is shorter than the outro. The
+    slate then covers the tail of one repeat and the head of the next, which is
+    two source ranges rather than one - a fourth encoder pass, and one repeat
+    that is no longer interchangeable with its neighbours. Handled here rather
+    than refused, because the alternative is telling somebody their audio is
+    the wrong length.
+    """
+    if clip <= 0:
+        raise SystemExit("--video: the clip has no duration to loop.")
+    if dur <= 0:
+        raise SystemExit("--video: the audio has no duration to cover.")
+    if intro + outro > dur + 1e-6:
+        raise SystemExit(
+            f"--slate-intro and --slate-outro total {(intro + outro) / 60:.2f} "
+            f"min, longer than the {dur / 60:.2f} min of audio. They would "
+            "have to overlap, and silently merging them would hide that the "
+            "schedule asked for something impossible.")
+
+    wins = []
+    if intro > 0:
+        wins.append([0.0, min(intro, dur)])
+    if outro > 0:
+        wins.append([max(0.0, dur - outro), dur])
+    wins.sort()
+    merged = []
+    for w in wins:                       # intro + outro == dur exactly is one
+        if merged and w[0] <= merged[-1][1] + 1e-6:
+            merged[-1][1] = max(merged[-1][1], w[1])
+        else:
+            merged.append(list(w))
+    wins = merged
+
+    pieces, encodes, cuts, keyframes = [], {}, {}, set()
+    t = 0.0
+    while t < dur - 1e-6:
+        span = min(clip, dur - t)        # the last repeat is cut to the audio
+        marks = {0.0, span}
+        for a, b in wins:
+            for x in (a, b):             # window edges falling inside this pass
+                if t + 1e-6 < x < t + span - 1e-6:
+                    marks.add(x - t)
+        ms = sorted(marks)
+        for i in range(len(ms) - 1):
+            s0, s1 = ms[i], ms[i + 1]
+            o0, o1 = t + s0, t + s1
+            if any(a - 1e-6 <= o0 and o1 <= b + 1e-6 for a, b in wins):
+                # fade only where the window really begins or ends. A slate
+                # split across a loop seam must NOT fade at the seam - it is one
+                # continuous appearance that happens to span two files
+                fi = any(abs(o0 - a) < 1e-6 for a, _ in wins)
+                fo = any(abs(o1 - b) < 1e-6 for _, b in wins)
+                key = f"slate_{s0:08.3f}_{s1:08.3f}_{int(fi)}{int(fo)}"
+                encodes.setdefault(key, {"src0": s0, "src1": s1,
+                                         "fade_in": fi, "fade_out": fo})
+            elif s0 <= 1e-6 and s1 >= clip - 1e-6:
+                key = "body"             # a whole bare repeat: the body itself
+            else:
+                key = f"cut_{s0:08.3f}_{s1:08.3f}"
+                cuts.setdefault(key, {"src0": s0, "src1": s1})
+                if s0 > 1e-6:
+                    keyframes.add(round(s0, 3))
+                if s1 < clip - 1e-6:
+                    keyframes.add(round(s1, 3))
+            pieces.append({"key": key, "src0": s0, "src1": s1,
+                           "slate": key.startswith("slate")})
+        t += span
+    return pieces, encodes, cuts, sorted(keyframes)
+
+
+def scrim_default(cfg):
+    """The wash's default strength, which differs by MODE rather than by flag.
+
+    --scrim parses to None so that argparse carries no mode-conditional default
+    of its own, and run() settles the number here, once, for every caller -
+    GUI, CLI or a direct run(). Photo mode's 0.65 is shipped and must not move:
+    changing it would alter every photo render ever made from the same inputs.
+    """
+    return VIDEO_SCRIM_DEFAULT if cfg.get("video") else SCRIM_DEFAULT
+
+
+def video_samples(dur):
+    """How many frames the legibility check reads, for a clip `dur` long.
+
+    One every VIDEO_SAMPLE_EVERY seconds rather than a fixed count: five
+    samples is one every 42s on a three-minute clip, and the tone under the
+    slate moves far faster than that - headlights, a car crossing frame, a pan
+    off a wall. Clamped at both ends so a ten-second clip is not sampled once
+    and an hour-long one does not spend a minute seeking.
+
+    It narrows the odds and does not close them, which is why the line this
+    feeds says "worst of N samples" rather than "worst contrast".
+    """
+    n = int(round(max(1.0, dur) / VIDEO_SAMPLE_EVERY))
+    return max(VIDEO_SAMPLES_MIN, min(VIDEO_SAMPLES_MAX, n))
+
 
 def _slate_names(cfg):
     """The slate's lines, in the order slate_boxes() returns them."""
@@ -552,7 +780,7 @@ def _slate_names(cfg):
             + ["place", "city · conditions", "time"])
 
 
-def _slate_legibility(img, cfg, W, H):
+def _slate_legibility(img, cfg, W, H, dy=None):
     """The weakest contrast between slate ink and the photo under it.
 
     Reported rather than enforced. The colour presets were chosen against
@@ -563,9 +791,12 @@ def _slate_legibility(img, cfg, W, H):
 
     Measured on the FINISHED frame, so the scrim is included: what is wanted is
     the contrast the viewer gets, not the one the bare photo had.
+
+    The sampled bands come from slate_boxes, so they FOLLOW the slate wherever
+    --slate-position puts it rather than reading a fixed region of the frame.
     """
     k = W / 1280.0
-    boxes = slate_boxes(cfg, dh=1280.0 * H / W)
+    boxes = slate_boxes(cfg, dh=1280.0 * H / W, dy=dy)
     fg = cfg.get("foreground") or BONE
     worst, where = 99.0, ""
     for (x0, x1, b), name in zip(boxes, _slate_names(cfg)):
@@ -1051,6 +1282,864 @@ def build_photo_video(cfg, segs, unique, photos, audio, dur, W, H, out, work,
     return out
 
 
+# ------------------------------------------------- the slate over a source clip
+def slate_clock(s):
+    """--slate-time as the house 'hh:mm AM/PM'.
+
+    Typed as 24-hour HH:MM, drawn the way every other LSS frame draws a time.
+    A clip render is one still slate among a catalogue of them, and the one
+    frame in 24-hour time would be the one that looks wrong. The 12-hour form
+    is accepted too, so whichever way it is typed lands in the same place.
+    """
+    s = " ".join((s or "").upper().split())
+    for fmt in ("%H:%M", "%I:%M %p", "%I:%M%p"):
+        try:
+            return datetime.datetime.strptime(s, fmt).strftime("%I:%M %p")
+        except ValueError:
+            pass
+    raise ValueError(f"'{s}' is not a time like 18:30 or 06:30 PM")
+
+
+def video_info(path):
+    """What the source clip is, as ffmpeg will actually present it.
+
+    The rotation matters and it is not cosmetic: a phone clip shot upright is
+    stored landscape with a 90 degree display matrix, ffmpeg applies that
+    matrix before any filter runs, and so the frame reaching overlay is the
+    TRANSPOSED size while ffprobe's width and height are the stored one. An
+    overlay built to the stored size would not line up with the frame at all.
+    Every size below is therefore the displayed size.
+    """
+    if not shutil.which("ffprobe"):
+        raise SystemExit("ffprobe not found on PATH. It ships with ffmpeg; "
+                         "run Setup.bat to install both.")
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-of", "json",
+         "-show_entries",
+         "stream=width,height,r_frame_rate,pix_fmt,codec_name,"
+         "color_primaries,color_transfer,color_space:"
+         "stream_side_data=rotation:format=duration", path],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"--video: cannot read {path}\n  "
+                         + (r.stderr or "").strip()[-400:])
+    try:
+        d = json.loads(r.stdout)
+        st = (d.get("streams") or [None])[0]
+        if st is None:
+            raise ValueError("no video stream")
+    except Exception as e:
+        raise SystemExit(f"--video: {path} has no readable video stream ({e}).")
+
+    rot = 0
+    for sd in st.get("side_data_list") or []:
+        if "rotation" in sd:
+            rot = int(round(float(sd["rotation"])))
+    w, h = int(st["width"]), int(st["height"])
+    if abs(rot) % 180 == 90:
+        w, h = h, w
+
+    num, _, den = (st.get("r_frame_rate") or "0/1").partition("/")
+    try:
+        fps = float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        fps = 0.0
+    try:
+        dur = float((d.get("format") or {}).get("duration") or 0.0)
+    except (TypeError, ValueError):
+        dur = 0.0
+    return {"width": w, "height": h, "rotation": rot, "fps": fps,
+            "duration": dur, "codec": st.get("codec_name") or "",
+            "pix_fmt": st.get("pix_fmt") or "",
+            # kept so the output is TAGGED as whatever the source was rather
+            # than as whatever x264 assumes; an untagged bt709 clip plays back
+            # as bt601 in some players and the whole frame shifts
+            "primaries": st.get("color_primaries") or "bt709",
+            "trc": st.get("color_transfer") or "bt709",
+            "space": st.get("color_space") or "bt709"}
+
+
+def _video_check(cfg):
+    """Reject a clip render asking for something this mode cannot mean.
+
+    An error rather than a quiet no-op, for the reason lss_scene.check() and
+    lss_photo.check() both give: a flag that was typed and ignored is only ever
+    discovered by noticing it did nothing.
+
+    Almost the whole flag surface lands here, and that is the honest shape of
+    the mode. Burning a static slate onto a supplied clip derives nothing from
+    audio, builds no geometry, has no playhead and writes no still, so the only
+    flags that survive are the ones that decide what the slate SAYS and what
+    colour it is.
+    """
+    dead = [
+        ("style", "--style", "", "a source clip is not a generated silhouette"),
+        ("scale", "--scale", "Skyline (rank)",
+         "nothing here is derived from loudness"),
+        ("dynamics", "--dynamics", "More",
+         "nothing here is derived from loudness"),
+        ("towers", "--towers", "Default", "there are no towers to size"),
+        ("detail", "--detail", "Default",
+         "there is no generated detail to count"),
+        ("weather", "--weather", "off", "the clip carries its own weather"),
+        ("height_stat", "--height-stat", "peak",
+         "nothing here is derived from loudness"),
+        ("tree_ahead", "--tree-ahead", scene_mod.TREE_AHEAD[0],
+         "there is no silhouette to draw a tree in"),
+        ("mountain_face", "--mountain-face", scene_mod.MOUNTAIN_FACE[0],
+         "there is no silhouette to draw a ridge in"),
+        ("photo_interval", "--photo-interval", PHOTO_INTERVAL,
+         "there is one clip and it is not a cycle"),
+        ("slate_scope", "--slate-scope", "both",
+         "the slate IS this mode; there is no still for it to skip"),
+        ("cycle_minutes", "--cycle-minutes", 0.0,
+         "a colour cycle steps along a playhead and there is none here"),
+    ]
+    for key, flag, dflt, why in dead:
+        if cfg.get(key, dflt) != dflt:
+            return f"{flag} has no meaning with --video: {why}."
+    for key, flag, why in (
+            ("rows", "--rows", "a clip is one frame, not stacked envelope rows"),
+            ("filled", "--filled", "there is no silhouette to fill"),
+            ("no_align", "--no-align", "nothing here is aligned to loudness"),
+            ("no_blink", "--no-blink", "there are no beacons to blink"),
+            ("no_twinkle", "--no-twinkle", "there is no star field to hold"),
+            ("cover", "--cover", "this mode writes one video and no stills"),
+            ("variants", "--variants",
+             "the palette only reaches the slate, so every variant would "
+             "differ in the text colour alone"),
+            ("stars_explicit", "--stars",
+             "the star field is drawn behind a silhouette, and the clip is "
+             "the whole background"),
+    ):
+        v = cfg.get(key)
+        if v and not (key == "rows" and v == 1):
+            return f"{flag} has no meaning with --video: {why}."
+    # --thumb-only writes a thumbnail and stops, which a LOOPED render can do
+    # because it makes one. A bare clip render writes no still at all, so there
+    # would be nothing left of it.
+    if cfg.get("thumb_only") and not cfg.get("looping"):
+        return ("--thumb-only has no meaning with --video on its own: this "
+                "mode writes no thumbnail, so there would be nothing left. "
+                "Pass an audio file to make it a looped render, which does.")
+    p = cfg.get("progress", 1.0)
+    if p is not None and float(p) != 1.0:
+        return ("--progress has no meaning with --video: there is no playhead "
+                "to draw part-way along.")
+    if not (cfg.get("slate_time") or "").strip():
+        return "--video needs --slate-time, e.g. --slate-time 18:30."
+    return None
+
+
+def _slate_overlay(cfg, W, H, time_text, out):
+    """The scrim and the slate as ONE straight-alpha RGBA PNG at the clip's size.
+
+    What _photo_frame() composites straight onto a still, handed back as a
+    layer instead so ffmpeg can put it over every frame of a clip. Both halves
+    are drawn by lss_draw exactly as the photo path draws them - draw_scrim and
+    draw_slate, no second implementation - and only the ASSEMBLY lives here,
+    which is the same split _photo_frame already sits on.
+
+    'over' is associative, so slate-over-scrim-over-frame is the composite
+    scrim_over() and slate_over() make in two passes onto a photo.
+
+    The two halves combine PREMULTIPLIED, and the result is un-premultiplied
+    once at the end because ffmpeg's overlay filter wants straight alpha. The
+    slate's own half keeps slate_over's rule intact - drawn at SS, the coverage
+    and the colour downsampled SEPARATELY - since that is what stops a LANCZOS
+    negative lobe ringing into a bright fringe at a glyph edge.
+
+    Measured against the Pillow path on three frames of the real 4K clip, in
+    levels of mean absolute error: this layer through ffmpeg's overlay 0.005,
+    peak 2, nothing above 2 anywhere. The ffmpeg blend pair (multiply then
+    addition) that would avoid the un-premultiply measures 0.372 - worse,
+    because blend truncates where ImageChops rounds - so the straight overlay
+    is the one to use. Blending in yuv420 instead measures 1.43 with peaks of
+    81 on the accent-coloured runs, which is why the filter graph forces rgb.
+    """
+    k = W / 1280.0
+    dh = 1280.0 * H / W
+    pos = cfg.get("slate_position", "top")
+    dy = slate_dy(dh, pos)
+    fg = cfg.get("foreground") or BONE
+    slate = fg if cfg.get("slate_mono") else cfg["accent"]
+    boxes = slate_boxes(cfg, dh=dh, dy=dy)
+    band_top, band_bot = scrim_band(dh, dy, max(b[2] for b in boxes), pos)
+
+    layer = Image.new("RGBA", (W * D.SS, H * D.SS), (0, 0, 0, 0))
+    D.draw_slate(ImageDraw.Draw(layer), cfg, W, k, dy,
+                 format_number(cfg.get("number", ""),
+                               cfg.get("number_style", "No.")),
+                 time_text, fg, slate, FONT)
+    pm_im, am_im = D.premultiplied(layer, W, H)
+
+    # float32, not 64: every value here is a small integer and a 24-bit mantissa
+    # carries them exactly, where the wider type doubles 200 MB of working set
+    # per plane on a 4K frame for no precision that survives the rint below.
+    #
+    # And float rather than another ImageChops chain, which is what the scrim
+    # combine below was first written as. Each 8-bit step in it rounds, and the
+    # rounding is the whole error budget: measured against the Pillow path on
+    # three frames of the real clip, the ImageChops combine gives 0.42 mean
+    # absolute error and this gives 0.005, for four lines either way.
+    pm = np.asarray(pm_im, dtype=np.float32)
+    a = np.asarray(am_im, dtype=np.float32) / 255.0
+
+    strength = float(cfg.get("scrim", scrim_default(cfg)))
+    if strength > 0 and band_bot > 0:
+        sc = np.asarray(
+            D.draw_scrim(W, H, strength, cfg.get("background") or INK,
+                         band_bot * k, D.SCRIM_FADE * k, band_top * k),
+            dtype=np.float32)
+        # the scrim goes UNDERNEATH the slate, both premultiplied. 'over' is
+        # associative, so this is the composite _photo_frame() makes in two
+        # passes onto a still
+        ca = sc[..., 3] / 255.0
+        inv = 1.0 - a
+        pm += sc[..., :3] * (ca * inv)[..., None]
+        a += ca * inv
+
+    # where nothing covers, the colour is arbitrary and is multiplied by an
+    # alpha of zero on the way out; guard the divide rather than special-case it
+    col = pm / np.maximum(a, 1.0 / 255.0)[..., None]
+    rgba = np.concatenate(
+        [np.clip(np.rint(col), 0, 255),
+         np.clip(np.rint(a * 255.0), 0, 255)[..., None]], axis=-1).astype(np.uint8)
+    Image.fromarray(rgba, "RGBA").save(out)
+    return out
+
+
+def _video_legibility(cfg, src, W, H, dur, work, n=None, windows=None):
+    """The weakest contrast the slate reaches anywhere in the clip, and when.
+
+    _slate_legibility() reads one frame, which is all a still has. Footage does
+    not hold still: a pan off a dark wall onto a bright sky, headlights
+    crossing the lower third, a three-minute shot that starts at dusk and ends
+    at night. A slate measured only at second 1 can be gone by second 40, and
+    that is precisely the case --scrim exists to fix, so the number reported is
+    the WORST across the clip rather than the first.
+
+    Measured on the scrimmed frame before the ink goes down, for the reason
+    scrim_over() gives: once the glyphs are there they are most of what a
+    sample of their own band contains. With the scrim off - which is a clip's
+    default - that is simply the bare footage, which is the point: the wash is
+    no longer standing between the text and whatever the shot is doing.
+
+    Returns (worst, line, when, n). The COUNT comes back with the number
+    because it qualifies it: this is the worst of n samples, not the worst in
+    the clip, and the two are only the same if the tone under the slate holds
+    still between them. It does not, which is why the count is printed.
+
+    `windows` restricts the sampling to (start, end) ranges of the SOURCE that
+    actually show the slate. A looped render carries it for four minutes out of
+    two and a half hours, and sampling the other two hours and twenty-six
+    minutes would measure the contrast of text that is not on screen - slowly.
+    The timestamps reported are source offsets, which is where the fix is
+    applied anyway.
+    """
+    wins = windows or [(0.0, dur)]
+    span = sum(b - a for a, b in wins) or dur
+    n = n or video_samples(span)
+    k = W / 1280.0
+    dh = 1280.0 * H / W
+    pos = cfg.get("slate_position", "top")
+    dy = slate_dy(dh, pos)
+    boxes = slate_boxes(cfg, dh=dh, dy=dy)
+    band_top, band_bot = scrim_band(dh, dy, max(b[2] for b in boxes), pos)
+    strength = float(cfg.get("scrim", scrim_default(cfg)))
+    worst, where, when = 99.0, "", 0.0
+    for i in range(n):
+        # walk the sampling point through the windows in order, so the samples
+        # are spread evenly over the seconds that SHOW the slate rather than
+        # over the runtime
+        off = span * (i + 0.5) / n
+        t = wins[-1][1]
+        for a, b in wins:
+            if off <= b - a:
+                t = a + off
+                break
+            off -= b - a
+        png = os.path.join(work, f"_probe{i}.png")
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-ss", f"{t:.3f}", "-i", src,
+             "-frames:v", "1", "-vf", "format=rgb24", png],
+            capture_output=True, text=True)
+        if r.returncode != 0 or not os.path.exists(png):
+            continue
+        img = D.scrim_over(Image.open(png).convert("RGB"), W, H, k, strength,
+                           cfg.get("background") or INK, band_bot, band_top)
+        c, w = _slate_legibility(img, cfg, W, H, dy=dy)
+        if c < worst:
+            worst, where, when = c, w, t
+        os.remove(png)
+    return worst, where, when, n
+
+
+def build_slate_video(cfg, src, ovl, out, dur, info, on_progress=None):
+    """One overlay pass: the static slate burned onto the clip, audio stripped.
+
+    The encode settings are MEASURED on real footage rather than carried over
+    from photo_segment(), whose one-keyframe-per-segment and "CRF costs nothing
+    here" were both found on a HELD frame - where every P-frame is a skip and
+    the segment IS its keyframe. Moving photographic content inverts that, so
+    no -g is set at all and x264's own keyint with scene-cut detection does the
+    job it is for.
+
+    Measured on a 20s excerpt of a 3840x2160 30fps 22.5 Mb/s HEVC phone clip -
+    56.3 MB of source - with PSNR and SSIM taken against the overlaid source
+    regenerated live by this same filter chain, so what is measured is encode
+    loss and not the overlay:
+
+        CRF 14   89.72 MB   35.9 Mb/s   PSNR 48.64   SSIM 0.9944
+        CRF 16   63.20 MB   25.3 Mb/s   PSNR 48.26   SSIM 0.9939
+        CRF 18   43.73 MB   17.5 Mb/s   PSNR 47.80   SSIM 0.9933
+        CRF 20   29.65 MB   11.9 Mb/s   PSNR 47.22   SSIM 0.9926
+        CRF 22   19.71 MB    7.9 Mb/s   PSNR 46.55   SSIM 0.9917
+
+    Eight CRF points buy 2.1 dB and 0.0027 SSIM, and cost 4.5x the bytes. That
+    narrow spread is the finding: the source has ALREADY been through HEVC at
+    22.5 Mb/s, so its high-frequency detail is gone before x264 ever sees it,
+    and spending bitrate here buys precision about someone else's compression
+    artefacts. CRF 16 - the shipping default for the generated renders - writes
+    63.2 MB over a 56.3 MB source, more than the footage it is copying. CRF 20
+    writes 29.7 MB, 53% of the source, still 47.2 dB and SSIM 0.993. That is
+    the default. CRF 22 is a defensible 35% if size ever matters more.
+
+    Preset at CRF 20, five interleaved rounds off a pre-extracted excerpt, BEST
+    of each rather than the median: the wall clock on this machine swung 20s to
+    144s on one config, noise far past the 5% a median absorbs, and with
+    additive noise the minimum is the closest thing to the real cost. Sizes
+    need none of that - they repeated to the byte every round.
+
+        fast    19.5s   29.79 MB   +0.5%
+        medium  21.3s   29.65 MB    ---
+        slow    29.6s   28.75 MB   -3.0%
+
+    Slow costs 39% more time to save 3.0% of the bytes; fast saves 8% of the
+    time for half a percent more of them. Neither trade is worth taking on a
+    mode whose whole point is a quick look at the slate over real footage.
+    Medium.
+
+    -fps_mode passthrough because the clip is very slightly variable (30000/1001
+    nominal, 3733800/124561 average) and the requirement is to preserve what the
+    source has rather than resample it onto a grid of our choosing.
+    """
+    fmt = "yuv444p" if cfg.get("full_chroma") else "yuv420p"
+    # rgb for the blend itself, whatever the delivery format: compositing in
+    # yuv420 measures peaks of 81 levels on the accent-coloured slate runs,
+    # because the chroma plane is half resolution exactly where the glyph edges
+    # are. Subsample ONCE, at the end, as the encoder was always going to.
+    chain = f"[0:v]format=rgb24[b];[b][1:v]overlay=0:0:format=rgb,format={fmt}[v]"
+    cmd = ["ffmpeg", "-y", "-v", "error",
+           "-i", src, "-i", ovl,
+           "-filter_complex", chain, "-map", "[v]",
+           "-an",                     # camera audio; the real audio is muxed later
+           "-c:v", "libx264",
+           "-preset", cfg.get("x264_preset") or VIDEO_PRESET,
+           "-crf", str(cfg.get("crf") if cfg.get("crf") is not None else VIDEO_CRF),
+           "-pix_fmt", fmt, "-fps_mode", "passthrough",
+           "-color_primaries", info["primaries"], "-color_trc", info["trc"],
+           "-colorspace", info["space"],
+           "-movflags", "+faststart", out]
+    _ffmpeg_progress(cmd, dur, on_progress=on_progress)
+    return out
+
+
+def _video_sidecar(cfg, info, worst, where, when, samples, out):
+    """The trimmed sidecar: no geometry, because there is none.
+
+    _sidecar()'s look and shape blocks describe a silhouette derived from an
+    envelope, and this mode has neither. The slate block keeps that one's shape
+    exactly, so the half that IS the same reads the same.
+    """
+    return {
+        "rendered_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "mode": "slate over video",
+        "slate": {
+            "series": cfg.get("series"),
+            "place": cfg.get("place"),
+            "city": cfg.get("city"),
+            "conditions": cfg.get("conditions"),
+            "time": cfg.get("slate_time"),
+            "number": cfg.get("number"),
+            "number_style": cfg.get("number_style"),
+        },
+        "look": {
+            "color_preset": cfg.get("color_preset", ""),
+            "background": cfg.get("background", INK),
+            "foreground": cfg.get("foreground", BONE),
+            "accent": cfg.get("accent"),
+            "slate_mono": cfg.get("slate_mono", False),
+            "slate_position": cfg.get("slate_position", "top"),
+            "scrim": float(cfg.get("scrim", scrim_default(cfg))),
+            # named "sampled_" on purpose: it is the worst of N frames, not the
+            # worst in the clip, and the JSON should not read as a guarantee
+            # either
+            "sampled_min_contrast": round(worst, 2),
+            "sampled_min_contrast_line": where,
+            "sampled_min_contrast_at_s": round(when, 1),
+            "contrast_samples": samples,
+        },
+        "video": {
+            "source": os.path.basename(cfg.get("video", "")),
+            "source_size": f"{info['width']}x{info['height']}",
+            "source_codec": info["codec"],
+            "source_pix_fmt": info["pix_fmt"],
+            "source_rotation": info["rotation"],
+            "fps": round(info["fps"], 6),
+            "duration_s": round(info["duration"], 3),
+        },
+        "encode": {
+            "crf": cfg.get("crf") if cfg.get("crf") is not None else VIDEO_CRF,
+            "preset": cfg.get("x264_preset") or VIDEO_PRESET,
+            "pix_fmt": "yuv444p" if cfg.get("full_chroma") else "yuv420p",
+            "overlay_format": "rgb",
+            "fps_mode": "passthrough",
+            "colour_tags": [info["primaries"], info["trc"], info["space"]],
+            "audio": "stripped",
+            "file": os.path.basename(out),
+            "size_mb": round(os.path.getsize(out) / 1e6, 2),
+        },
+    }
+
+
+def video_validate(src):
+    """Probe the clip and refuse it now if it cannot carry the slate.
+
+    Called before the render folder is created, for the reason photo mode
+    checks its stills up front: every other early failure leaves an empty
+    folder behind and that has never mattered, but a mistyped path or a clip
+    off the wrong camera is the one somebody will actually hit.
+    """
+    if not os.path.exists(src):
+        raise SystemExit(f"--video: file not found: {src}")
+    info = video_info(src)
+    W, H = info["width"], info["height"]
+    if info["duration"] <= 0:
+        raise SystemExit(f"--video: could not read a duration from {src}.")
+    if H > W:
+        raise SystemExit(
+            f"--video: {os.path.basename(src)} is {W}x{H}, taller than it is "
+            "wide. The slate is laid out across the top of a landscape frame, "
+            "and on a vertical one it would centre in the middle of the shot - "
+            "which looks deliberate and is not. Shoot or crop to landscape.")
+    if W < VIDEO_MIN_W:
+        raise SystemExit(
+            f"--video: {os.path.basename(src)} is {W}x{H}, narrower than the "
+            f"slate's {VIDEO_MIN_W}px design basis. Nothing would be upscaled - "
+            "the slate is vector - but every size and margin in it would be "
+            "scaled below what the layout was ever checked at. Use a larger "
+            "source.")
+    return info
+
+
+def _loop_sidecar(cfg, info, plan, dur, worst, where, when, samples, thumb, out):
+    """The looped render's sidecar - the clip-mode one plus the schedule.
+
+    The plan is recorded in full because it is the claim this mode makes: N
+    encodes and a pile of stream copies for a runtime many times longer. What
+    actually went through the encoder is the thing worth being able to check
+    afterwards, exactly as photo mode records its segments.
+    """
+    pieces, encodes, cuts, keyframes = plan
+    d = _video_sidecar(cfg, info, worst, where, when, samples, out)
+    d["mode"] = "slate over video, looped"
+    d["video"]["audio"] = os.path.basename(cfg.get("audio", ""))
+    d["video"]["audio_duration_s"] = round(dur, 3)
+    d["video"]["clip_duration_s"] = round(info["duration"], 3)
+    d["video"]["repeats"] = round(dur / info["duration"], 3)
+    d["thumbnail"] = {"file": os.path.basename(thumb) if thumb else None,
+                      "from_clip_s": float(cfg.get("thumb_at", 0.0))}
+    enc = [{"key": "body", "src_s": [0.0, round(info["duration"], 3)],
+            "dur_s": round(info["duration"], 3), "slate": False}]
+    enc += [{"key": k, "src_s": [round(v["src0"], 3), round(v["src1"], 3)],
+             "dur_s": round(v["src1"] - v["src0"], 3), "slate": True,
+             "fade_in": v["fade_in"], "fade_out": v["fade_out"]}
+            for k, v in encodes.items()]
+    d["loop"] = {
+        "slate_intro_s": round(float(cfg.get("slate_intro_s", 0.0)), 3),
+        "slate_outro_s": round(float(cfg.get("slate_outro_s", 0.0)), 3),
+        "fade_s": LOOP_FADE,
+        "concat_entries": len(pieces),
+        "encoded_segments": enc,
+        "encoded_seconds": round(sum(e["dur_s"] for e in enc), 1),
+        "stream_copied_segments": [
+            {"key": k, "src_s": [round(v["src0"], 3), round(v["src1"], 3)],
+             "dur_s": round(v["src1"] - v["src0"], 3)} for k, v in cuts.items()],
+        "forced_keyframes_s": keyframes,
+    }
+    return d
+
+
+def _run_loop(cfg, slug, outdir, work, progress, on_progress):
+    """One clip looped to fill an audio track, slated at each end."""
+    src = cfg["video"]
+    info = cfg.get("_video_info") or video_validate(src)
+    W, H = info["width"], info["height"]
+    clip = info["duration"]
+
+    dur = probe_duration(cfg["audio"])
+    if dur <= 0:
+        raise SystemExit(f"Could not read a duration from {cfg['audio']}.")
+    intro = slate_window(cfg.get("slate_intro", SLATE_INTRO_DEFAULT), dur,
+                         "--slate-intro")
+    outro = slate_window(cfg.get("slate_outro", SLATE_OUTRO_DEFAULT), dur,
+                         "--slate-outro")
+    if intro >= dur:                     # 'all', or a window covering it all
+        intro, outro = dur, 0.0
+    cfg["slate_intro_s"], cfg["slate_outro_s"] = intro, outro
+
+    plan = loop_plan(dur, clip, intro, outro)
+    pieces, encodes, cuts, keyframes = plan
+    enc_s = clip * (1 if (cuts or any(p["key"] == "body" for p in pieces))
+                    else 0) + sum(v["src1"] - v["src0"] for v in encodes.values())
+
+    progress(f"Source: {os.path.basename(src)}  {W}x{H} @ "
+             f"{info['fps']:.3f} fps, {clip / 60:.2f} min, {info['codec']}")
+    progress(f"Audio:  {os.path.basename(cfg['audio'])}  {dur / 60:.1f} min "
+             f"= {dur / clip:.2f} repeats of the clip")
+    progress(f"Slate:  {intro / 60:g} min in, {outro / 60:g} min out, "
+             f"{LOOP_FADE:g}s fades, position {cfg.get('slate_position','top')}"
+             f", scrim {float(cfg['scrim']):g}")
+    progress(f"Plan:   {len(pieces)} concat entries from "
+             f"{len(encodes) + 1} encodes and {len(cuts)} stream copies "
+             f"- {enc_s / 60:.1f} min of footage encoded for a "
+             f"{dur / 60:.1f} min output ({dur / enc_s:.1f}x less)")
+    if on_progress:
+        on_progress(0.03, None)
+
+    progress("Building the slate overlay…")
+    ovl = _slate_overlay(cfg, W, H, cfg["slate_time"],
+                         os.path.join(work, "_slate.png"))
+
+    # only the stretches that actually show the slate, in SOURCE time
+    wins = sorted({(round(v["src0"], 3), round(v["src1"], 3))
+                   for v in encodes.values()})
+    if wins:
+        span = sum(b - a for a, b in wins)
+        ns = video_samples(span)
+        progress(f"Checking slate contrast, {ns} samples across the "
+                 f"{span / 60:.1f} min that show it…")
+        worst, where, when, ns = _video_legibility(
+            cfg, src, W, H, dur, work, ns, windows=wins)
+        if not where:
+            progress("  could not read frames to measure; skipping the check")
+        else:
+            progress(f"  slate contrast: worst of {ns} samples {worst:.1f}:1 "
+                     f"({where}, at {when:.0f}s into the clip)")
+            if worst < 4.5:
+                progress(f"  WARNING: below 4.5:1. Raise --scrim (currently "
+                         f"{float(cfg['scrim']):g}), or move "
+                         "--slate-position off this part of the frame.")
+    else:
+        worst, where, when, ns = 99.0, "", 0.0, 0
+        progress("No slate scheduled; skipping the contrast check.")
+    if on_progress:
+        on_progress(0.08, None)
+
+    tw = int(cfg.get("thumb_width", 1920))
+    th = round(tw * H / float(W))
+    progress(f"Building thumbnail from {float(cfg.get('thumb_at', 0.0)):g}s "
+             f"into the clip…")
+    thumb, under = loop_thumbnail(cfg, src, float(cfg.get("thumb_at", 0.0)),
+                                  tw, th, work,
+                                  os.path.join(outdir, f"{slug}_thumb.png"))
+    c, wname = _slate_legibility(under, cfg, tw, th,
+                                 dy=slate_dy(1280.0 * th / tw,
+                                             cfg.get("slate_position", "top")))
+    progress(f"  thumbnail slate contrast {c:.1f}:1 ({wname})")
+    if on_progress:
+        on_progress(0.10, None)
+
+    def done(vid):
+        json.dump(_loop_sidecar(cfg, info, plan, dur, worst, where, when, ns,
+                                thumb, vid or ""),
+                  open(os.path.join(outdir, f"{slug}_render.json"), "w"),
+                  indent=2)
+        shutil.rmtree(work, ignore_errors=True)
+        if on_progress:
+            on_progress(1.0, 0)
+        return {"thumbnail": thumb, "thumbnails": [thumb], "video": vid,
+                "cover": None, "duration": dur, "folder": outdir}
+
+    if cfg.get("thumb_only"):
+        progress("Done (thumbnail only).")
+        return done(None)
+
+    progress(f"Encoding {enc_s / 60:.1f} min of footage…")
+    t0 = time.time()
+    vid = build_loop_video(cfg, src, ovl, cfg["audio"], dur,
+                           os.path.join(outdir, f"{slug}.mp4"), work, info,
+                           plan, progress=progress, on_progress=on_progress)
+    el = time.time() - t0
+    progress(f"  {os.path.basename(vid)}  "
+             f"{os.path.getsize(vid) / 1e9:.2f} GB in {el / 60:.1f} min "
+             f"({dur / el:.1f}x realtime for the finished runtime, "
+             f"{enc_s / el:.2f}x for the footage actually encoded)")
+    progress("Done.")
+    return done(vid)
+
+
+def _run_video(cfg, slug, outdir, work, progress, on_progress):
+    """The slate burned onto one source clip, end to end.
+
+    Neither audio pass exists here: there is no envelope to derive and no
+    soundtrack to mux, so the clip is probed for its shape and otherwise only
+    ever decoded once, by the encode itself.
+    """
+    src = cfg["video"]
+    info = cfg.get("_video_info") or video_validate(src)
+    W, H, dur = info["width"], info["height"], info["duration"]
+
+    progress(f"Source: {os.path.basename(src)}  {W}x{H} @ "
+             f"{info['fps']:.3f} fps, {dur / 60:.1f} min, {info['codec']}"
+             + (f", rotated {info['rotation']}" if info["rotation"] else ""))
+    if on_progress:
+        on_progress(0.04, None)
+
+    progress("Building the slate overlay…")
+    ovl = _slate_overlay(cfg, W, H, cfg["slate_time"],
+                         os.path.join(work, "_slate.png"))
+    if on_progress:
+        on_progress(0.08, None)
+
+    ns = video_samples(dur)
+    progress(f"Checking slate contrast, {ns} samples "
+             f"(~{dur / ns:.0f}s apart)…")
+    worst, where, when, ns = _video_legibility(cfg, src, W, H, dur, work, ns)
+    if not where:
+        # every sample failed to decode. Not fatal - the encode reads the clip
+        # its own way and may well be fine - but the number must not be invented
+        progress("  could not read frames to measure; skipping the check")
+    else:
+        # "worst of N samples", never "worst contrast": this is a sampled
+        # minimum and reading it as a verified one is exactly how it misleads
+        progress(f"  slate contrast: worst of {ns} samples {worst:.1f}:1 "
+                 f"({where}, at {when:.0f}s)")
+        if worst < 4.5:
+            progress(f"  WARNING: below 4.5:1. Raise --scrim (currently "
+                     f"{float(cfg['scrim']):g}), or move --slate-position off "
+                     "this part of the frame.")
+    if on_progress:
+        on_progress(0.12, None)
+
+    progress(f"Encoding {dur / 60:.1f} min at {W}x{H}…")
+    out = build_slate_video(
+        cfg, src, ovl, os.path.join(outdir, f"{slug}.mp4"), dur, info,
+        on_progress=(lambda f, e=None: on_progress(0.12 + 0.88 * f, e))
+        if on_progress else None)
+    progress(f"  {os.path.basename(out)}  "
+             f"{os.path.getsize(out) / 1e6:.2f} MB")
+
+    json.dump(_video_sidecar(cfg, info, worst, where, when, ns, out),
+              open(os.path.join(outdir, f"{slug}_render.json"), "w"), indent=2)
+    shutil.rmtree(work, ignore_errors=True)
+    if on_progress:
+        on_progress(1.0, 0)
+    progress("Done.")
+    return {"thumbnail": None, "thumbnails": [], "video": out,
+            "cover": None, "duration": dur, "folder": outdir}
+
+
+def _x264(cfg, info):
+    """The shared encoder tail, so every segment in a loop render matches.
+
+    Concat-copy needs one resolution, one pixel format, one timebase and one
+    set of encoder settings across every piece, or the copy cannot be a copy.
+    One list, used by all of them.
+    """
+    fmt = "yuv444p" if cfg.get("full_chroma") else "yuv420p"
+    return ["-c:v", "libx264",
+            "-preset", cfg.get("x264_preset") or VIDEO_PRESET,
+            "-crf", str(cfg.get("crf") if cfg.get("crf") is not None
+                        else VIDEO_CRF),
+            "-pix_fmt", fmt, "-fps_mode", "passthrough",
+            "-color_primaries", info["primaries"], "-color_trc", info["trc"],
+            "-colorspace", info["space"],
+            # every segment on the same timebase, which is what lets the
+            # concat demuxer copy rather than re-stamp
+            "-video_track_timescale", "90000"]
+
+
+def loop_body(cfg, src, out, keyframes, info, dur, on_progress=None):
+    """The clip encoded once, bare, with keyframes forced at the cut points.
+
+    This is the answer to how a stream copy can start mid-clip. The cut offsets
+    are known BEFORE the body is encoded - loop_plan works them out from the
+    schedule - so they are handed to x264 as -force_key_frames and an IDR lands
+    exactly there. Cutting on a keyframe is then true by construction rather
+    than by luck, and nothing around the slate boundaries has to be re-encoded.
+
+    The alternative, cutting a clip somebody else encoded at offsets it has no
+    keyframe near, is what would force re-encoding the GOP at each boundary.
+    That case never arises here. The cost of this one is two extra I-frames in
+    a seventeen-minute encode.
+    """
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", src, "-an"]
+    if keyframes:
+        cmd += ["-force_key_frames", ",".join(f"{k:.3f}" for k in keyframes)]
+    cmd += _x264(cfg, info) + [out]
+    _ffmpeg_progress(cmd, dur, on_progress=on_progress)
+    return out
+
+
+def loop_slate_segment(cfg, src, ovl, out, seg, info, on_progress=None):
+    """One stretch of the clip with the slate on it, faded in and/or out.
+
+    The overlay is the same static PNG every other slated frame uses; what
+    makes it arrive and leave is a looped image INPUT run through fade with
+    alpha, which costs nothing structurally because these seconds were always
+    going to be encoded on their own.
+
+    A slate split across a loop seam fades only at its real edges - see
+    loop_plan. Fading at the seam would read as the slate blinking in the
+    middle of its own appearance.
+    """
+    length = seg["src1"] - seg["src0"]
+    fmt = "yuv444p" if cfg.get("full_chroma") else "yuv420p"
+    f = ["[1:v]format=rgba"]
+    if seg["fade_in"]:
+        f.append(f"fade=t=in:st=0:d={LOOP_FADE:g}:alpha=1")
+    if seg["fade_out"]:
+        f.append(f"fade=t=out:st={max(0.0, length - LOOP_FADE):.3f}"
+                 f":d={LOOP_FADE:g}:alpha=1")
+    chain = (",".join(f) + "[ovl];"
+             "[0:v]format=rgb24[b];"
+             f"[b][ovl]overlay=0:0:format=rgb,format={fmt}[v]")
+    cmd = ["ffmpeg", "-y", "-v", "error",
+           "-ss", f"{seg['src0']:.3f}", "-t", f"{length:.3f}", "-i", src,
+           "-loop", "1", "-framerate", f"{info['fps']:.6f}", "-i", ovl,
+           "-filter_complex", chain, "-map", "[v]", "-an",
+           "-t", f"{length:.3f}"] + _x264(cfg, info) + [out]
+    _ffmpeg_progress(cmd, length, on_progress=on_progress)
+    return out
+
+
+def loop_cut(body, out, seg):
+    """A bare stretch taken out of the body encode by stream copy.
+
+    -ss before -i so the seek is to a keyframe, which loop_body has guaranteed
+    is exactly here. avoid_negative_ts make_zero restarts the segment's
+    timestamps at 0, without which the concat demuxer inherits an offset and
+    the assembled timeline drifts.
+    """
+    length = seg["src1"] - seg["src0"]
+    cmd = ["ffmpeg", "-y", "-v", "error",
+           "-ss", f"{seg['src0']:.3f}", "-i", body, "-t", f"{length:.3f}",
+           "-c", "copy", "-avoid_negative_ts", "make_zero", out]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit("ffmpeg failed cutting a loop segment:\n"
+                         + r.stderr[-800:])
+    return out
+
+
+def build_loop_video(cfg, src, ovl, audio, dur, out, work, info, plan,
+                     progress=lambda s: None, on_progress=None):
+    """The looped render: a few encodes, some copies, one concat, one audio pass.
+
+    What goes through the encoder is the clip once plus the minutes that carry
+    the slate - for a seventeen-minute clip under a two-and-a-half hour
+    recording that is about twenty minutes of footage for a two-and-a-half hour
+    output. Everything else is a stream copy of a file already on disk, and the
+    nine bare repeats are the SAME file named nine times, so they cost the mux
+    and nothing else.
+
+    No +faststart on the output. It rewrites the whole file to move the moov
+    atom to the front, which on a twenty-gigabyte render means reading and
+    writing twenty gigabytes a second time for a benefit - progressive HTTP
+    streaming - that a file being uploaded to YouTube never collects.
+    """
+    pieces, encodes, cuts, keyframes = plan
+    files = {}
+
+    need_body = bool(cuts) or any(p["key"] == "body" for p in pieces)
+    total = len(encodes) + (1 if need_body else 0)
+    done = 0
+    if need_body:
+        progress(f"  encode 1/{total}: the clip, bare, "
+                 f"{info['duration'] / 60:.1f} min"
+                 + (f", keyframes forced at "
+                    + ", ".join(f"{k:.2f}s" for k in keyframes)
+                    if keyframes else ""))
+        files["body"] = loop_body(
+            cfg, src, os.path.join(work, "body.mp4"), keyframes, info,
+            info["duration"],
+            on_progress=(lambda f, e=None: on_progress(0.10 + 0.45 * f, e))
+            if on_progress else None)
+        done = 1
+        progress(f"    {os.path.getsize(files['body']) / 1e9:.2f} GB")
+
+    for key, seg in encodes.items():
+        done += 1
+        length = seg["src1"] - seg["src0"]
+        progress(f"  encode {done}/{total}: slate over "
+                 f"{seg['src0']:.1f}-{seg['src1']:.1f}s ({length:.0f}s"
+                 + (", fade in" if seg["fade_in"] else "")
+                 + (", fade out" if seg["fade_out"] else "") + ")")
+        files[key] = loop_slate_segment(
+            cfg, src, ovl, os.path.join(work, f"{key}.mp4"), seg, info)
+
+    for key, seg in cuts.items():
+        progress(f"  copy: {seg['src0']:.1f}-{seg['src1']:.1f}s out of the body")
+        files[key] = loop_cut(files["body"], os.path.join(work, f"{key}.mp4"),
+                              seg)
+
+    # basenames, list beside them - the concat demuxer resolves a relative
+    # entry against the LIST's directory, which sidesteps escaping a Windows
+    # path inside a demuxer argument
+    lst = os.path.join(work, "_concat.txt")
+    with open(lst, "w", encoding="utf-8") as fh:
+        for p in pieces:
+            fh.write(f"file '{os.path.basename(files[p['key']])}'\n")
+
+    progress(f"Assembling {len(pieces)} segments and encoding audio…")
+    _ffmpeg_progress(
+        ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+         "-i", lst, "-i", audio, "-map", "0:v", "-map", "1:a",
+         "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
+         "-t", f"{dur:.3f}", "-shortest", out],
+        dur, on_progress=(lambda f, e=None: on_progress(0.55 + 0.45 * f, e))
+        if on_progress else None)
+    return out
+
+
+def loop_thumbnail(cfg, src, at, tw, th, work, out):
+    """The thumbnail: one frame of the clip with the slate composited on it.
+
+    Pulled through the Pillow path rather than the ffmpeg one, exactly as photo
+    mode composes a still - this is a single frame, so there is no reason to
+    pay for the overlay-and-encode route the video takes.
+    """
+    png = os.path.join(work, "_thumbframe.png")
+    r = subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-ss", f"{max(0.0, at):.3f}",
+         "-i", src, "-frames:v", "1", "-vf", f"scale={tw}:{th}", png],
+        capture_output=True, text=True)
+    if r.returncode != 0 or not os.path.exists(png):
+        raise SystemExit(f"--thumb-at {at:g}: could not read a frame there.\n"
+                         + (r.stderr or "")[-400:])
+    k = tw / 1280.0
+    dh = 1280.0 * th / tw
+    pos = cfg.get("slate_position", "top")
+    dy = slate_dy(dh, pos)
+    fg = cfg.get("foreground") or BONE
+    boxes = slate_boxes(cfg, dh=dh, dy=dy)
+    band_top, band_bot = scrim_band(dh, dy, max(b[2] for b in boxes), pos)
+    img = D.scrim_over(Image.open(png).convert("RGB"), tw, th, k,
+                       float(cfg["scrim"]), cfg.get("background") or INK,
+                       band_bot, band_top)
+    under = img
+    img = D.slate_over(img, cfg, tw, th, k, dy,
+                       format_number(cfg.get("number", ""),
+                                     cfg.get("number_style", "No.")),
+                       cfg["slate_time"], fg,
+                       fg if cfg.get("slate_mono") else cfg["accent"], FONT)
+    img.save(out)
+    os.remove(png)
+    return out, under
+
+
 # ----------------------------------------------------------------- driver
 def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None, cover=None,
              photos=None):
@@ -1264,12 +2353,20 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     cfg["background"] = cfg.get("background") or INK
     cfg["foreground"] = (cfg.get("foreground")
                          or presets_mod.auto_foreground(cfg["background"]))
+    # ...and the wash's strength with them, ONCE, because its default differs
+    # by mode. None means "not typed" - see scrim_default().
+    if cfg.get("scrim") is None:
+        cfg["scrim"] = scrim_default(cfg)
     # ...and the sky's own colour with them, from whichever of the three the
     # palette names. An error rather than a silent no-op, for the reason
     # scene_mod.check() gives: the alternative is finding out after the encode.
-    if cfg.get("photos"):
-        cfg["stars"] = False          # nothing to stand behind: the photo IS
-                                      # the whole background
+    if cfg.get("photos") and cfg.get("video"):
+        raise SystemExit("--photos and --video are different modes: one cycles "
+                         "stills, the other burns the slate onto a clip. "
+                         "Choose one.")
+    if cfg.get("photos") or cfg.get("video"):
+        cfg["stars"] = False          # nothing to stand behind: the photo, or
+                                      # the clip, IS the whole background
     if cfg.get("stars"):
         P = presets_mod.load()
         key = cfg.get("color_preset") or "None (series colour)"
@@ -1301,6 +2398,9 @@ def run(cfg, progress=lambda s: None, on_progress=None):
         progress("Checking photos against "
                  + ", ".join(f"{n} {w}x{h}" for n, w, h in t) + "…")
         cfg["_photos_ok"] = photo_mod.validate(cfg["photos"], t)
+    if cfg.get("video"):
+        # same rule, same place: refused before a folder exists to leave behind
+        cfg["_video_info"] = video_validate(cfg["video"])
 
     # degrade an unmounted network path here rather than in the GUI, so the CLI
     # stays usable off the studio's network too instead of dying in makedirs
@@ -1315,13 +2415,31 @@ def run(cfg, progress=lambda s: None, on_progress=None):
         outdir = os.path.join(base, f"{slug}_{n}")
         n += 1
     os.makedirs(outdir)
-    work = os.path.join(outdir, "_work")
-    os.makedirs(work, exist_ok=True)
-    progress(f"Output folder: {outdir}")
+    # A looped render's scratch is the clip re-encoded plus the pieces cut out
+    # of it - several gigabytes written, read and deleted - and outdir is
+    # routinely a network drive or a synced folder. That work goes to LOCAL
+    # temp; only the finished render lands in outdir.
+    if cfg.get("video") and cfg.get("audio"):
+        import tempfile
+        work = tempfile.mkdtemp(prefix="lss_loop_")
+        progress(f"Output folder: {outdir}")
+        progress(f"Scratch (local): {work}")
+    else:
+        work = os.path.join(outdir, "_work")
+        os.makedirs(work, exist_ok=True)
+        progress(f"Output folder: {outdir}")
 
     def stage(lo, hi):
         return (lambda f, eta=None: on_progress(lo + (hi - lo) * f, eta)) \
             if on_progress else None
+
+    if cfg.get("video"):
+        # an audio file alongside --video is what asks for a looped render:
+        # there is a runtime to fill, where --video alone is one pass over one
+        # clip and has nothing to loop to
+        if cfg.get("audio"):
+            return _run_loop(cfg, slug, outdir, work, progress, on_progress)
+        return _run_video(cfg, slug, outdir, work, progress, on_progress)
 
     if cfg.get("photos"):
         return _run_photo(cfg, slug, outdir, work, progress, on_progress, stage)
@@ -1587,14 +2705,62 @@ def main():
                         f"(default {PHOTO_INTERVAL:g}). The cycle "
                         "repeats until the audio is covered and the last "
                         "segment is cut to the audio's end")
-    g.add_argument("--scrim", type=float, default=SCRIM_DEFAULT,
-                   metavar="0-1",
-                   help=f"how heavy the wash behind the slate is on a photo "
-                        f"(default {SCRIM_DEFAULT}, 0 turns it off). A "
-                        "photograph puts arbitrary luminance under the text "
-                        "where a palette never would; this is what replaces "
-                        "that guarantee. Painted in the background colour, "
-                        "faded out below the slate's own lowest ink")
+    # default None, NOT a number: the default differs by mode and settling it
+    # here would mean a conditional buried in the parser. run() settles it once,
+    # through scrim_default(), for every caller - see that function
+    g.add_argument("--scrim", type=float, default=None, metavar="0-1",
+                   help=f"how heavy the wash behind the slate is, 0 turns it "
+                        f"off. Defaults to {SCRIM_DEFAULT} on a photo, where "
+                        "one fixed frame makes the wash cheap insurance, and "
+                        f"to {VIDEO_SCRIM_DEFAULT:g} on a clip, where a sky "
+                        "that already carries the text turns it into a haze "
+                        "around the text. Painted in the background colour, "
+                        "as a band behind the slate that fades out on "
+                        "whichever side is not a frame edge")
+
+    g = a.add_argument_group(
+        "video", "the slate burned onto a supplied clip")
+    g.add_argument("--video", default="", metavar="PATH",
+                   help="burn the slate onto a source clip instead of "
+                        "rendering one. Turns clip mode ON: one video in, one "
+                        "video out, the slate composited on top, camera audio "
+                        "stripped. The clip's resolution and frame rate are "
+                        "preserved exactly - nothing is resized or resampled - "
+                        "and a source narrower than "
+                        f"{VIDEO_MIN_W}px, or taller than it is wide, is an "
+                        "error rather than a cramped or centred slate. Takes "
+                        "no audio file: the real audio is muxed later")
+    g.add_argument("--slate-time", default="", metavar="HH:MM",
+                   help="the time frozen on the slate, e.g. 18:30. Drawn in "
+                        "the house 12-hour form whichever way it is typed. "
+                        "Static, like photo mode's - a still slate is what "
+                        "makes the overlay a single image and the encode one "
+                        "pass. Required with --video")
+    g.add_argument("--slate-intro", default=str(SLATE_INTRO_DEFAULT),
+                   metavar="MINUTES",
+                   help=f"how long the slate shows at the START of a looped "
+                        f"render, in minutes (default {SLATE_INTRO_DEFAULT:g}, "
+                        "0 turns it off, 'all' leaves it on for the whole "
+                        "runtime). Looping needs an audio file alongside "
+                        "--video; without one the slate is simply always on, "
+                        "as it has been")
+    g.add_argument("--slate-outro", default=str(SLATE_OUTRO_DEFAULT),
+                   metavar="MINUTES",
+                   help=f"the same at the END (default "
+                        f"{SLATE_OUTRO_DEFAULT:g}, 0 turns it off). Together "
+                        "these may not exceed the audio's length - that is an "
+                        "error, not a quiet merge")
+    g.add_argument("--thumb-at", type=float, default=0.0, metavar="SECONDS",
+                   help="which frame of the clip the thumbnail comes from "
+                        "(default 0, the first). Looped renders only")
+    g.add_argument("--slate-position", default=SLATE_POSITIONS[0],
+                   choices=SLATE_POSITIONS,
+                   help="where the slate block sits in the frame (default "
+                        "top, the layout every other render uses). Footage has "
+                        "a subject and the slate can land on it; this moves "
+                        "the whole block as a unit, in design units, so "
+                        "nothing in it changes size or spacing. The wash and "
+                        "the contrast check both follow it. --video only")
 
     g = a.add_argument_group("shape", "how loudness becomes height")
     g.add_argument("--scale", default="Skyline (rank)", choices=SCALES)
@@ -1665,11 +2831,17 @@ def main():
         print("stars:", ", ".join(presets_mod.star_presets(P)))
         print("detail:", ", ".join(scene_mod.DETAIL) + ", or a number")
         return
-    missing = [k for k in ("audio","place","city","conditions","date","start")
-               if not getattr(n, k)]
+    # A clip render takes no audio file and has no live clock, so neither the
+    # recording nor the date and start time it would be stamped from are
+    # required: --slate-time carries the only time on the frame.
+    need = (("video", "place", "city", "conditions", "slate_time")
+            if n.video else
+            ("audio", "place", "city", "conditions", "date", "start"))
+    missing = [k for k in need if not getattr(n, k)]
     if missing:
-        a.error("missing required: " + ", ".join("--"+m if m!="audio" else "audio"
-                                                 for m in missing))
+        a.error("missing required: "
+                + ", ".join("audio" if m == "audio" else "--" + m.replace("_", "-")
+                            for m in missing))
     for flag in ("accent", "background", "foreground"):
         v = getattr(n, flag)
         if v and not presets_mod.valid_hex(v):
@@ -1683,6 +2855,9 @@ def main():
         a.error("--photos needs lss_photo.py and this installation does not "
                 "have it yet. Restart the app once to let the updater fetch "
                 "it, or run: py lss_studio/lss_update.py --repair")
+    if photos and n.video:
+        a.error("--photos and --video are different modes: one cycles stills, "
+                "the other burns the slate onto a clip. Choose one.")
     if photos:
         # read off the RAW namespace, before any series default is written
         # back over a flag - otherwise every render would look as though it
@@ -1691,18 +2866,65 @@ def main():
                                    stars_explicit=bool(n.stars)))
         if err:
             a.error(err)
+        # Not in lss_photo.check(): that module ships to installs that may be a
+        # launch behind, and a flag it has never heard of must not become an
+        # error there. The refusal is temporary anyway - photo mode is where
+        # this is wanted next.
+        if n.slate_position != SLATE_POSITIONS[0]:
+            a.error("--slate-position is --video only for now: photo mode "
+                    "always draws its slate at the top.")
+    elif n.video:
+        # the same RAW namespace rule, for the same reason
+        try:
+            slate_time = slate_clock(n.slate_time)
+        except ValueError as e:
+            a.error(f"--slate-time: {e}")
+        err = _video_check(dict(vars(n), slate_time=slate_time,
+                                stars_explicit=bool(n.stars),
+                                looping=bool(n.audio)))
+        if err:
+            a.error(err)
+        dead = [("--width", n.width, 2560), ("--height", n.height, 1440),
+                ("--fps", n.fps, 10)]
+        if not n.audio:
+            # a bare clip render writes no still, so there is nothing for the
+            # thumbnail flags to size or to pick a frame from
+            dead.append(("--thumb-width", n.thumb_width, 1920))
+        for flag, val, dflt in dead:
+            if val != dflt:
+                a.error(f"{flag} has no meaning with --video: the clip's own "
+                        "resolution and frame rate are preserved exactly, and "
+                        "nothing is resized or resampled.")
+        if not n.audio:
+            for flag, val, dflt in (("--slate-intro", n.slate_intro,
+                                     str(SLATE_INTRO_DEFAULT)),
+                                    ("--slate-outro", n.slate_outro,
+                                     str(SLATE_OUTRO_DEFAULT)),
+                                    ("--thumb-at", n.thumb_at, 0.0)):
+                if val != dflt:
+                    a.error(f"{flag} needs an audio file alongside --video: it "
+                            "schedules the slate across a looped runtime, and "
+                            "a bare clip render is one pass with the slate on "
+                            "throughout.")
     else:
         # ...and the same rule the other way round. A photo flag on a generated
         # render would do nothing at all, and a flag that was typed and ignored
         # is only ever discovered by noticing it had no effect.
         for flag, val, dflt in (("--photo-interval", n.photo_interval,
                                  PHOTO_INTERVAL),
-                                ("--scrim", n.scrim, SCRIM_DEFAULT),
+                                # None is "not typed" now that the default is
+                                # settled per mode, so this reads the same test
+                                # it always meant
+                                ("--scrim", n.scrim, None),
                                 ("--slate-scope", n.slate_scope, "both")):
             if val != dflt:
                 a.error(f"{flag} needs --photos: it only means something for a "
                         "photo render. A generated render always carries its "
                         "slate, and has no photographs to wash behind it.")
+        if n.slate_position != SLATE_POSITIONS[0]:
+            a.error("--slate-position needs --video: a generated render lays "
+                    "its silhouette out around a slate at the top, and the "
+                    "city style caps its towers under that same text.")
     cfg = vars(n)
     cfg["photos"] = photos
     custom = {"accent": n.accent,
@@ -1738,7 +2960,9 @@ def main():
     cfg["geometry"] = presets_mod.series_geometry(n.series_key, P)
     cfg["scene"] = presets_mod.series_scene(n.series_key, P)
     cfg["style"] = n.style or presets_mod.series_style(n.series_key, P)
-    if not cfg["photos"]:
+    if n.video:
+        cfg["slate_time"] = slate_clock(n.slate_time)
+    if not cfg["photos"] and not n.video:
         err = scene_mod.check(cfg["scene"], cfg["style"], n.rows, n.filled,
                               n.progress)
         if err:
