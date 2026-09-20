@@ -427,7 +427,7 @@ def _pane(dr, p, k, c, bg, lit, filled):
     when its own face crowds it, rather than always being the flat opposite
     state colour. Deliberately not done in the pass that found it: this function
     is shared with houses, so changing the rule moves that style too and needs
-    its own byte-identity story. See the city depth notes in README.md.
+    its own byte-identity story. See the city depth notes in docs/MANUAL.md.
     """
     x0, y0, x1, y1 = p["rect"]
     if p["lit"] and lit:

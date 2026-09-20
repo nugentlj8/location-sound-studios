@@ -1,0 +1,1086 @@
+# Location Sound Studios
+
+*User manual. For what this project is and how it works, see the
+[project overview](../README.md).*
+
+Turns a field-recording audio file into a matching YouTube thumbnail and a
+full-length video whose skyline is drawn from the recording's own loudness.
+
+## Install (Windows, once)
+
+1. Install **Python** from [python.org](https://www.python.org/downloads/).
+   On the first installer screen, tick **"Add Python to PATH."**
+2. Download this repository: green **Code** button → **Download ZIP**, then
+   unzip it somewhere permanent like `Documents\LSS`.
+3. Double-click **`Setup.bat`**. It installs ffmpeg and the two Python
+   packages. If it installs ffmpeg, close the window and run it once more.
+
+Then launch any time with **`Location Sound Studios.bat`**.
+
+### Font (recommended)
+
+Install **Barlow Condensed** (Bold) from Google Fonts, then in Command Prompt:
+
+```
+setx LSS_FONT "C:\Users\YOU\AppData\Local\Microsoft\Windows\Fonts\BarlowCondensed-Bold.ttf"
+```
+
+Open a fresh window afterward. Without it the app falls back to Arial.
+
+## The window
+
+The audio file and the output folder sit at the top, and **Render**, **Thumbnail only** and
+**Preview at** sit at the bottom, always visible. Everything else is on five tabs, grouped by what
+it decides:
+
+| Tab | What it decides |
+|---|---|
+| **Slate** | what the frame says — place, city, conditions, date, start time, number, file name |
+| **Look** | series, silhouette, detail, and the two silhouette treatments |
+| **Colour** | occasion, colours, custom colours, and the Compare list |
+| **Shape** | how loudness becomes height — scaling, dynamics, tower width, stacked rows |
+| **Video** | the encode only — resolution and chroma. Thumbnail only skips all of it |
+
+`lss_render.py --help` is grouped the same way.
+
+## Silhouettes
+
+Each series is set in a **scene**, and the scene decides which silhouettes it can wear. Pick one
+with the **Silhouette** dropdown, or `--style` from the command line:
+
+| Scene | Series | Styles | Default |
+|---|---|---|---|
+| town | Sounds of the City | `blocks`, `houses`, `city` | `city` |
+| town | Sounds in Spaces | `blocks`, `houses`, `city` | `blocks` |
+| town | Sounds in Towns | `blocks`, `houses`, `city` | `houses` |
+| nature | Sounds of Nature | `topo`, `mountains`, `forest`, `mountains_forest` | `mountains_forest` |
+
+The default is per **series**, not per scene — the three town series share a scene and want three
+different silhouettes. To put your own series on a particular one, add `"style": "houses"` to it in
+`lss_presets.json`.
+
+- **`blocks`** — the skyline of rectangular towers, one per block of the recording. The plain
+  envelope skyline, and the only town style that stacks under `--rows`.
+- **`city`** — the same skyline built as actual buildings: window grids, antennas, a near layer of
+  low buildings across the bottom, and depth shading. What `blocks` looks like up close.
+- **`houses`** — a low residential row with varied rooflines, windows, doors and street trees. Only
+  the loudest few percent of the recording earns a taller block, so the skyline stays a town rather
+  than a city.
+- **`topo`** — the smoothed contour line.
+- **`mountains`** — a range whose summits sit where the loud passages are, taller for louder.
+- **`forest`** — a treeline. With nothing else carrying the signal, tree height follows loudness.
+- **`mountains_forest`** — trees in front, mountains behind.
+
+In the nature silhouettes the **mountains carry the audio and the trees do not**: tree size is
+pinned to the frame, so a quiet recording still gets a normal-looking treeline while the mountains
+rise and fall with the recording. As the playhead crosses, trees fill solid; ahead of it they are
+present but faint. The mountains only ever carry flat lit and shadow faces kept close to the sky
+colour, so the trees stay the thing that reads as progress.
+
+How far a face sits from the sky is measured against the sky, not fixed — a bright silhouette can
+be pushed further back and still read, while a mid-toned accent goes muddy at the same setting.
+That keeps the played and unplayed halves at a comparable weight in every palette.
+
+Everything generated is seeded from the recording's own loudness envelope, so the same file always
+renders the same shape — including every window, which house is occupied and which tree is which
+shape. The seed is written into the render's `.json` sidecar.
+
+### Inside a town
+
+`houses` draws the street in some detail:
+
+- **Windows and doors**, laid out per house from the recording's seed. Panes are separated by gaps
+  of sky rather than by drawn glazing bars — a gap carries the same contrast the silhouette's own
+  edge does, where a hairline stroke would disappear on the tighter palettes.
+- **Lit windows.** Most are unlit and read as dark openings; a few are lit. Occupancy is decided per
+  house first and only then per window, so lit windows cluster into a house instead of speckling
+  evenly down the street. A lit window is drawn in whichever of the two colours the playhead is
+  *not* showing there — accent ahead of it, silhouette colour behind it — so a house that is
+  occupied stays occupied as the playhead crosses it instead of going dark.
+- **Facade shading.** Light comes from the right, as it does on the mountains, and the left of each
+  house carries a second, dimmer tone. It uses the same measure the mountains do — distance from the
+  sky, scaled by how much contrast the palette actually has — at a much smaller step, because in a
+  town the houses are what the playhead recolours and they have to stay dominant. With outlines
+  instead of a fill there is nothing to divide, so only the division is drawn, and on a house that
+  vertical run reads as a building corner.
+- **Street trees in two shapes**, evergreen and deciduous, mixed. The nature silhouettes stay
+  evergreen-only.
+
+### Inside a city
+
+`city` is the town's parts at a city's density — the same window builder, the same shade, the same
+pane minimums, with the numbers a downtown wants rather than a street:
+
+| | `houses` | `city` |
+|---|---|---|
+| window grid | 27u bays, one storey | 13×15u, full height |
+| occupied | 45% of buildings | 95% |
+| lit windows | 40% of an occupied one | 50% |
+
+Every block is a building with a floor under its height, where the plain `blocks` line is allowed
+to touch its own baseline. Roofs step in about two times in five, and the tallest buildings carry
+**antennas** — a plain needle whose tip is the light, capped at 14 so a skyline doesn't turn into a
+comb.
+
+**`city` sets its own block width** — 27 blocks across the frame, about 45 design units each,
+whatever `--towers` says. The far layer needs a grain of its own: at the near layer's 30–45u the two
+read as one layer however they are toned, and width is what fixed that, not tone. So for this style
+`--towers` no longer sets how many blocks there are; it changes only how finely the recording is
+sampled before each block takes its loudest moment.
+
+| `--towers` | envelope blocks | city blocks | block width |
+|---|---|---|---|
+| Thick | 28 | 27 | 44.7u |
+| Default | 40 | 27 | 44.7u |
+| Thin | 64 | 27 | 44.7u |
+| Fine | 90 | 27 | 44.7u |
+| Auto | 34–72 | 27 | 44.7u |
+
+It is a fixed width rather than a floor on `--towers`, which was tried first and cannot work: `Thick`
+is the widest preset there is and still only gives a 47.9u slot, so a 50u floor binds on every preset
+including that one and they all collapse to the same count anyway. `blocks` and `houses` are
+unaffected — `--towers` means exactly what it always did for them.
+
+#### Depth
+
+A city gets its depth from a near layer standing in front of the skyline, because a single row of
+buildings on a single baseline has no way to say the towers are far away. Unlike `mountains_forest`,
+which separates its two layers by tone, a city separates its two by **position and a cut of sky** —
+both layers are drawn in the same two tones, because they are the same buildings at different
+distances.
+
+- **A near layer** — *the same downtown, closer.* Not a second, smaller settlement in front of it:
+  the near buildings use the city's own roofline and the city's own window grid, so what separates
+  near from far is size, overlap and strength, never the vocabulary. Reach for the town's pitched
+  roofs here and the band reads as a village that a city happens to stand behind.
+- It stands about 20 units below the skyline's baseline, so the frame has two ground lines a short
+  step apart. Its tallest buildings do rise a little past the *shortest* towers, so a block in the
+  quietest 4% of the height range can be hidden behind it — which is the price of keeping the tower
+  floor low, and the height range is what the render is for. Narrow buildings and deep notches keep
+  the band's average top far lower than raising that floor ever did.
+- It **carries no audio at all.** Exactly like the treeline in `mountains_forest`, its heights,
+  widths and spacing come from the recording's seed and nothing else, so a quiet recording gets the
+  same foreground as a loud one and only the skyline behind it breathes.
+- **It is one continuous band** — neighbours touch or overlap by up to 20%, never leaving sky between
+  them, which is what makes it read as a single nearer plane instead of a row of shapes each
+  competing with the skyline behind it. Widths run 30–45u, about a tower's own width.
+- **The top edge varies hard**, with deep notches cut right down to 14u about one block in five. Once
+  the buildings are narrow and touching, an evenly varied top edge stops reading as buildings and
+  becomes a bar across the bottom of the frame. Heights are a profile rather than a draw per
+  building: a smoothed run gives the band districts, a per-building draw breaks those up, and the
+  notches cut through both.
+- Overlap is capped at 20% for the notches' sake. The silhouette at any x is the *max* over
+  everything covering it, so heavy overlap is an upper envelope — a smoother — and it eats exactly
+  the notches this layer needs. Tallest are built first so the shorter ones in front paint over them,
+  the same order the mountains are built in.
+- **Bigger windows, fewer of them** — a 1.6× coarser grid than the towers. A nearer building's
+  windows *are* larger, and pitch turns out to do more work than tone: at the skyline's own spacing
+  the near layer carried identical texture, and two layers with one texture are one layer however
+  their tones are set.
+- **More lit than the skyline, not less** — 92% of near buildings occupied and 60% of their panes
+  lit, so about 55% burn against the towers' 48%. Held low at first on the theory that a quiet near
+  layer would keep the skyline dominant, which was wrong twice over: one window in twelve read as an
+  abandoned block rather than a restrained one, and the nearer thing is the one you can see into. The
+  skyline stays dominant on size and position, which is where dominance actually comes from.
+- The odd **deciduous street tree**, kept sparse — with the buildings overlapping there are no gaps
+  to sit in, so trees simply stand in front, and enough of them at one height stops reading as
+  street trees and starts reading as a hedge across the frame.
+- Each near shape cuts a **gap of sky** around itself before it fills, the same trick a street tree
+  uses in a town, because the skyline behind it is the same colour only weaker. The gap belongs to
+  the *band*, not to each building in it: every stroke goes down first and the fills then paint out
+  the shared edges, so only the outside keeps its cut. Where one near building meets another there is
+  a **corner seam** instead — a thin line in a tone, never in sky, which would put the gap back.
+- **A shaded side on the near buildings, and on the tree crowns too**, light from the right as
+  everywhere else, and in the skyline's own shadow tone — the same facet the towers have.
+- **The taller blocks carry a lit and a shadow face**, light from the right as everywhere else. The
+  division is snapped to a window-column edge, so the facet falls *between* two grids rather than
+  slicing one; at this block width it lands on the middle and the building reads corner-on. Short
+  blocks are left flat — a roofline already reads them, and faceting the whole row turns the skyline
+  back into texture.
+
+So a city frame has **two tones, not four**, measured as distance from the sky: **a lit face at 0.30
+and a shadow face at 0.54**, used by the near layer and the skyline alike. One city, one material,
+front to back. The corner seam where two near buildings meet is a third value, 0.78, but it is a
+3-unit hairline rather than a plane — it lands on the shaded side of the building it belongs to, so
+it has to clear 0.54 to be seen at all.
+
+The near layer spent a while a rung nearer — 0.00 body against the skyline's 0.30, and 0.27 against
+0.54 — on the reasoning that the front of the frame should be the strongest thing in it. In practice
+the band simply read *brighter and cleaner* than the towers: not as the same downtown closer up, but
+as a different, better-lit one pasted over it. Tone was never what separated these two layers anyway.
+The sky gap cut around every near shape spends the **whole** silhouette-vs-sky contrast, where a rung
+of a ladder spends a fraction of one, so giving the rung back costs nothing that was doing any work.
+
+The facets are equal for the same reason. The near split was deliberately the stronger one at 0.27
+against the towers' 0.24 — distance costs internal contrast first, so the crisply divided layer
+should be the near one — and it is a real effect, worth 1.05× to 1.22× in perceived lightness. But it
+was being *added on top of* a body-tone difference, and the two together are what read as two
+materials. With the bodies matched there is nothing left for a facet difference to do but reintroduce
+the split.
+
+The skyline was softened by moving its **shadow face only**, 0.62 → 0.54. Moving the lit face too
+took the whole layer a step further toward the sky, and since the mix runs toward the background that
+reads as the towers going darker on a dark palette — a change to the picture's weight, when all that
+was wanted was a change to the split. The lit face is the layer's depth; the distance to the shadow
+face is its facet. Separate decisions.
+
+0.54 is also the floor on how soft either layer's shadow face can go — the near layer inherits the
+constraint along with the tone — and that part is measured rather than judged.
+A lit window is drawn at full strength over whichever face it lands on, and on all eight presets the
+accent's luminance sits *between* the silhouette colour and the sky — so as a face is mixed toward
+the sky its luminance sweeps down and, somewhere in that sweep, crosses the lit colour and erases the
+window. That crossing sits around 0.46. Dropping the shadow face to 0.42 would land on it; 0.54 stays
+clear on the far side.
+
+> **Known defect — a lit window on a lit face, ahead of the playhead.** On four presets it is very
+> nearly invisible until the playhead reaches it: Alpine 1.05, Mist 1.11, Aurora 1.16, Canopy 1.17.
+> No choice of face depth rescues those, because the crossing above sits at a different depth in
+> every palette and whatever single depth is chosen, one of them is standing on it — measured across
+> 0.22–0.42 the worst case never rises above 1.05. The fix is in the **colour a lit pane is drawn
+> in**, not the depth ladder: it has to move when its own face crowds it. Deliberately left for its
+> own pass, because `_pane()` is shared with `houses` and changing the rule moves that style too.
+> Behind the playhead the pair inverts and the same presets measure 2.1 to 3.8, so a finished
+> thumbnail — fully played by default — never shows it. See the note on `_pane()` in `lss_draw.py`.
+
+**Overlapping happens in the near layer only, never in the skyline.** Up there the x axis is time: a
+building's centre picks its colour under a `cycle` and sets the second its beacon changes over, so
+sliding one tower's mass into its neighbour's slot would move a loud moment and make the playhead
+appear to re-cross a building it had already passed. Nothing in the near layer answers to the
+recording, which is exactly what makes overlap free down there — and it is the cheapest depth in the
+frame, since one building plainly in front of another says "near" with no tone at all. It is also
+what lets the band stay low enough to keep the towers the subject.
+
+#### How high the towers may go
+
+The ceiling is **a profile across the frame, not a single line.** The slate is not a solid bar — it
+is text down the left, a clock on the right and a wide hole in between — so a single ceiling made
+every column pay the worst column's price. The free spans are measured from the **real text extents
+at render time**, with the actual font at the actual sizes, because that is the whole point:
+`PHOENIX` and `SOUTH MOUNTAIN PARK` leave very different amounts of the frame open, and so do a
+two-word conditions line and a six-word one.
+
+| slate | columns with room above | extra headroom | tallest tower |
+|---|---|---|---|
+| `PHOENIX` / `AZ · CLEAR` | 66% of frame | up to 87u | +31% |
+| `SOUTH MOUNTAIN PARK` / `PHOENIX AZ · LIGHT WIND CICADAS` | 33% | up to 77u | +27% |
+
+29 units of air are kept around every text box, and the profile is smoothed so the ceiling ramps
+rather than steps — a cliff in the skyline that no loud moment put there would read as data. The
+smoothing may only ever push the ceiling *down* toward text, never up into it.
+
+**Height still comes entirely from the envelope.** A column's ceiling sets how much room a block
+*has*; the recording decides how much of it the block uses, so a quiet block under an empty span
+stays quiet. The honest cost is that the same loudness gives a different height depending on where it
+lands — a tower under the place name can't be compared against one in the clear. That is a deliberate
+trade: a tower that can break up and away from the rest is worth more than strict comparability.
+
+Masts are **proportional to their own building**, about 16% of its height, so the tallest tower in
+frame carries the longest antenna. Drawing an absolute length and then trimming it to leftover
+headroom did the exact opposite — the tallest tower sat closest to the ceiling, so it had the least
+room and wore the shortest stub. The room is therefore reserved in proportion when the building is
+sized, which comes out as a *scale* on the whole height range rather than a subtraction from it, and
+that is what keeps it monotone: gate a reserve on the antenna threshold instead and a block just over
+it comes out shorter than one just under.
+
+The needle is a rectangle, never a stroke: it stands against open sky, so it already carries the
+same contrast every roofline has, and being axis-aligned it downsamples without the fringing a
+hairline would pick up. The lit tip is the top segment of that needle, at the same width — so it is
+bounded by sky above and by the rest of the mast below. That matters because the two contrasts are
+complementary: a lit colour against the **sky** is only 1.90 on Morning and 1.80 on Evening, and
+against the **body** only 2.02 on Canopy and 1.65 on Alpine. Whichever edge a palette makes weak,
+the other one carries the tip; the worst case across all eight presets is 4.56.
+
+### Blinking beacons
+
+In the video the beacons blink, each on its own slow cycle — about 2 seconds lit out of every 3 to
+4.6, so 13–20 flashes a minute with the skyline mostly lit and winking rather than mostly dark and
+flashing. Phases come from the recording's seed like everything else.
+
+A typical frame carries 7 or 8 of them. Each gets its own period and phase from the seed, and the
+periods are all distinct, so the skyline never goes dark all at once however long it runs.
+
+This runs on the same ffmpeg timeline mechanism the live clock already uses, so it costs the encode
+essentially nothing — measured at 2560×1440, a full skyline of beacons is inside the noise of the
+encode time and adds 1–3% to the file size. A three-hour render still encodes in about the time it
+always did.
+
+A thumbnail always shows every beacon lit. Turn the blinking off with **Blink the antenna beacons**
+in the window, or `--no-blink`, and they stay steady in the video too.
+
+```
+py lss_studio\lss_render.py recording.flac --style city --thumb-only ...
+py lss_studio\lss_render.py recording.flac --style city --no-blink ...
+```
+
+Where a tree crosses a house, the tree is drawn at full strength with a thin gap of sky around it.
+Without that gap a filled tree and a filled house are the same colour and the tree simply
+disappears into the row — and on a palette like Morning, where accent and sky are only 1.90 apart,
+a tone step alone is not enough to separate them.
+
+```
+py lss_studio\lss_render.py recording.flac --style mountains_forest ...
+py lss_studio\lss_render.py recording.flac --style houses --colors Morning ...
+```
+
+Asking for a silhouette a series does not have is an error, not a silent fallback:
+
+```
+--style 'houses' is not available in the nature scene. Choose from: topo, mountains,
+forest, mountains_forest. 'houses' belongs to the town scene.
+```
+
+To put your own series in a scene, add `"scene": "nature"` or `"scene": "town"` to it in
+`lss_presets.json`. Leave it out and it is worked out from the series name, then from its geometry.
+
+### Detail
+
+**Silhouette detail** (`--detail Coarse | Default | Fine`, or a number like `1.2`) sets how much
+shape those styles carry — how many summits, how many trees, how many houses, how many buildings in
+a city's near layer. It counts features,
+not pixels, so a thumbnail and the full video of the same recording read identically; only the
+resolution differs. Tower width stays the control for `blocks`.
+
+Windows are much finer than anything else drawn here, so they have a floor: a pane smaller than a
+fixed minimum is not drawn. That test is applied **once, when the shape is built**, in the same
+1280×720 design units everything else uses — never against the output size. A pane that survives it
+therefore exists in the thumbnail and the video alike, which is what keeps the two the same image
+rather than two levels of detail. Turning detail up gives more houses, so each is narrower and its
+windows stop subdividing before they stop existing:
+
+| `--detail` | houses | house width | panes drawn |
+|---|---|---|---|
+| Coarse | 11 | 122u | 177 |
+| Default | 16 | 84u | 162 |
+| Fine | 23 | 58u | 134 |
+| 2.5 | 40 | 34u | 73 |
+
+The smallest pane any setting produces is 5 design units — 7.7px on the 1920 thumbnail and 10.2px
+on a 2560 video.
+
+### Checking a look without an encode
+
+A thumbnail is drawn as the **finished, fully-played frame** — the state the video ends on. Set
+**Preview at** to a percentage, or `--progress` from the command line, to see any other point
+instead, so you can check the fill behaviour in seconds rather than waiting for a full video:
+
+```
+py lss_studio\lss_render.py recording.flac --style mountains_forest --thumb-only --progress 0.5 ...
+py lss_studio\lss_render.py recording.flac --thumb-only --progress 0 ...   # the unplayed frame
+```
+
+Both controls sit beside the Render button, outside the tabs, since they decide what actually gets
+made. Leave Preview at blank and you get the finished frame; type `0` for the unplayed one.
+
+Two further switches change the treatment. **Trees before the playhead** (`--tree-ahead
+faint|outline`) sets how a tree looks before the playhead reaches it, and **Mountain faces**
+(`--mountain-face twotone|outline`) whether the mountain faces carry flat lit and shadow tones or
+only a ridgeline. The first of each is the default; `outline` on both gives a lighter, more linear
+frame. In the window each greys out for a silhouette it does not reach — `blocks` has no trees to
+draw faint, `forest` has no mountain faces.
+
+**Solid silhouette instead of outlines** is ticked by default in the window, since it is what the
+city, town and skyline styles are usually wanted as. It greys out and clears itself for
+`mountains`, `forest` and `mountains_forest`, which define their own fill — trees fill as the
+playhead passes them and mountains stay outlined, so there is nothing left for the switch to
+decide. Pick one of those and the box simply steps aside; pick a style that does take a fill and
+your choice comes back. On the command line nothing changed: `--filled` is still off unless you
+pass it, and passing it with one of those three is still an error rather than a silent no-op.
+
+## Stars
+
+A star field behind the silhouette, **on by default** on every palette that can carry one. Turn it
+off with **Star field behind the silhouette** in the window, or `--no-stars`. It works with every
+style — it is a *sky*, not silhouette geometry, so `blocks` and `topo` get one too — and the
+silhouette occludes it: no star is ever drawn on top of a building, a mountain or a tree.
+
+On a palette with no field — Morning and Evening — the frame simply renders without one. That is the
+whole reason `--stars` still exists: asking for a field **by name** turns those into an error instead,
+so "why are there no stars?" gets an answer rather than a quiet frame. A render that never mentions
+stars is never interrupted by them.
+
+About 170 stars at Default detail, spread over the whole sky including the space around and behind
+the slate text, on a jittered grid rather than at random. Randomness alone clumps, and a clump in a
+star field reads as a mistake rather than as a cluster. Size and brightness come off one draw, so a
+bigger star is a brighter one, weighted hard toward the small and faint: it is the handful at full
+strength that read, and the ones near the sky that give the field depth.
+
+`--detail` counts stars the way it counts every other feature, so a Fine sky has more of them.
+
+Everything comes from the recording's seed, salted onto its own random stream — so **turning stars on
+cannot move a single building.** The silhouette is bit-identical either way.
+
+### Which palettes
+
+Only the night palettes, and **each one names which of its own colours the stars take** rather than
+introducing a fourth:
+
+| palette | stars | contrast on its sky |
+|---|---|---|
+| Night | silhouette colour | 13.08 |
+| Aurora | silhouette colour | 15.41 |
+| Alpenglow | silhouette colour | 11.97 |
+| Canopy | silhouette colour | 9.53 |
+| Alpine | silhouette colour | 6.98 |
+| Mist | **accent** | 4.76 |
+| Morning, Evening | — | not available |
+
+Every night palette's silhouette colour is already near-white, so "the silhouette colour" *is* the
+white default rather than an approximation of it. **Mist is the exception**, and deliberately: white
+measures 1.55 on that pale sky and simply is not there. Its silhouette colour would read, at 9.10,
+but it is also the slate text colour, so the field would speckle the letterforms in the identical
+ink. The accent is clearly not the text and reads as snow-lit night rather than as dirt — which is
+what makes Mist the palette for a snowy-night recording.
+
+Morning and Evening simply render without a field. They are **refused with an error** only when
+`--stars` asked for one by name — the same bargain the rest of the validator makes, since the
+alternative there is finding out after a three-hour encode. Evening is refused on what the sky *is*
+rather than on contrast: white would survive there at 4.29, but it is a sunset. Add
+`"stars": "foreground"` to a palette in `lss_presets.json` to give your own sky a field.
+
+### Twinkling
+
+In the video a twinkling star **fades toward the sky and comes back** — full tone → part → gone →
+part → full tone — over a period of 9 to 17 seconds, so 3.5–6.7 fades a minute against the beacons'
+13–20. No step is shorter than about 1.5 seconds. That is the whole difference in intent: a beacon is
+a light that blinks and wants to be noticed, a star fades and must not be.
+
+It fades rather than brightening, and that is forced by what a filter can do rather than chosen. A
+`drawbox` paints **any** colour, the sky's included — the "only ever add" rule the beacons follow is
+a property of a *beacon*, which sits on a building whose colour differs either side of the playhead
+and varies along the frame under a cycle, so no single colour erases it. A star has none of that: it
+stands on bare sky, and the sky is one constant everywhere. So a filter can erase a star completely,
+which means the **baked** level is free to be the star's full brightness and the filters can carry
+the whole swing. Built the other way first — baked faint, filters brightening — and it was barely
+perceptible, because the floor could not go below the baked level and the swing came out under 2×.
+Fading instead gives 6×.
+
+Both video layers therefore bake the same full field the thumbnail draws, and a star is only ever
+taken *down* from there — so no frame of the video ever holds a thinner sky than its own thumbnail.
+
+Only about a quarter of the field twinkles, capped at 48 stars. Most of the sky is still; a field
+where every point moves reads as noise, where a few do it reads as air. The rest are baked into the
+frame and cost the encode nothing at all, which is what lets the field be large and the motion
+small.
+
+Five steps come out of **two** filters per star. The two `enable=` windows are nested — the floor
+sits inside the dip and comes later in the chain, so it wins where both are on. And a star needs one
+filter per level rather than the beacons' two, because a star is the same colour on both sides of the
+playhead: the sliding mask passes over it invisibly, which also keeps the skyline the only thing that
+reads as progress.
+
+The full erase paints **one pixel wider** than the star. A star does not end at its own rectangle —
+the supersampled block is downsampled with LANCZOS, whose negative lobes leave a ring about 5% of the
+star's amplitude just outside it, and erasing only the rectangle would leave that ring as a faint
+ghost square at exactly the moment the star is meant to be gone. A partial fade stays on the
+rectangle, or a star would appear to swell as it dims.
+
+A twinkling star is only given filters where the frame is **bare sky** underneath it. A `drawbox`
+does not know what is under it, so an occluded twinkler would flash a bright square on top of a tower
+or a letter — the one thing a background layer must never do, and now also the thing that would make
+an erase paint sky over a building. Visibility is read off the composed frame rather than worked out
+geometrically: a star can be behind a tower, inside a glyph, or cut out by the near layer's own sky
+gap, and reproducing all three in closed form would be a second implementation of the drawing that
+could only drift from the first. On a typical city frame 28 of 40 twinklers survive that test.
+
+Measured at 2560×1440, interleaved against a starless control: **+1.4%**, about 20 seconds on the 20
+minutes a three-hour render already takes, and +2.4% on file size. Most of that is the extra detail
+baked into the frame rather than the filters — a `drawbox` with a timeline expression costs about a
+microsecond per frame, and the cost stays linear to roughly 240 of them before it turns sharply
+worse.
+
+A thumbnail is a still, so it draws the whole field at full tone — the same thing both video layers
+bake. `--no-twinkle` holds them steady in the video too.
+
+```
+py lss_studio\lss_render.py recording.flac --style city --colors Night --stars ...
+py lss_studio\lss_render.py recording.flac --style mountains_forest --colors Mist --stars ...
+py lss_studio\lss_render.py recording.flac --stars --no-twinkle ...
+```
+
+> The filter graph now goes to ffmpeg in a **file** rather than on the command line. Windows caps a
+> command line at 32767 characters and fails outright past it — at launch, with nothing rendered —
+> and a `drawbox` costs about 91 of those. Seven beacons never came close; a sky's worth of twinklers
+> runs to ten thousand. What it encodes is byte-identical, verified by SHA against the inline form.
+
+## Colours
+
+Pick a **Colours** preset to set the time of day. Each one sets the sky, the silhouette, and the
+accent the playhead reveals, chosen together so the skyline still reads at thumbnail size:
+
+| Preset | Sky | Skyline | Looks like |
+|---|---|---|---|
+| Morning | deep gold | white | low warm sun |
+| Night | deep blue | bone | the original look |
+| Evening | burnt orange | white | sunset |
+| Canopy | deep forest green | cream | sunlight through the leaves |
+| Alpine | cold blue | snow white | high thin air, glacier-ice playhead |
+| Alpenglow | violet dusk | pale pink | the last sun still on the peaks |
+| Mist | fog grey-green | dark pine | fog off the water |
+| Aurora | arctic night | starlight | northern lights running the timeline |
+
+The last four were chosen against the nature silhouettes, where sky fills most of the frame, and
+read as outdoors without reaching for foliage green or bark brown. They still work for any scene.
+
+Presets are deliberately scene-agnostic — the same four work for city, town, nature and spaces,
+because what makes a recording look like a city is the silhouette shape, not the colour. So
+"Roosevelt Row at Morning" and "Roosevelt Row at Night" are clearly different images that both
+still read as the same place.
+
+Leave it on **None** to keep the series colour, exactly as before.
+
+A seasonal **Occasion** keeps its own accent and colour cycling on top of whichever sky the
+preset chose, so Night + 4th of July is still the red/white/blue cycle over a night sky.
+
+### Custom colours
+
+The three **Custom** rows — sky, silhouette, accent — override whichever preset is chosen. Leave
+one blank and it follows the preset; leave the silhouette blank in particular and it picks
+whichever of bone or ink stays readable on your sky, so a custom background can never render the
+skyline invisible.
+
+Each row has a dropdown of every colour the presets, series and occasions already use, named and
+with its hex — "Canopy sky #1D4029", "Night sky #13232E" — so a look can be built out of colours
+already known to work together. Picking one fills the hex box; typing a code in the box directly
+still works and switches the dropdown to **Custom…**. Type a code that happens to be one of the
+named colours and the dropdown says so. The swatch beside each box shows the colour you'll get.
+
+The list is read from the presets themselves, so a colour preset you add to `COLOR_PRESETS` or a
+series you add to `lss_presets.json` appears in all three dropdowns with no further work.
+
+### Comparing several colours at once
+
+Tick **Thumbnail only**, then tick as many colours as you like in the **Compare** list on the
+Colour tab. You get **the Colours choice plus every ticked colour**, one thumbnail each, all in the
+same folder and off a single pass over the audio — so three looks cost barely more than one. The
+silhouette is identical in each, because the geometry is built once and only the colours change.
+
+The extras are there to compare *against* whatever Colours is set to, so that one is always in the
+set; ticking it in the list as well changes nothing. Leave the list empty and you get the single
+Colours choice, named the way it always was.
+
+```
+py lss_studio\lss_render.py recording.flac --thumb-only --colors Night --variants "Aurora,Canopy" ...
+```
+
+Each file carries its palette in the name, since a folder of variants is otherwise unreviewable —
+two nearby skies are genuinely hard to tell apart once they're separate files:
+
+```
+007 - Roosevelt Row/
+  007 - Roosevelt Row_thumb_Night_bg-13232E_fg-F0E7D6_acc-CF7A34.png
+  007 - Roosevelt Row_thumb_Aurora_bg-0C1A2B_fg-E9F2F3_acc-3DD68C.png
+  007 - Roosevelt Row_thumb_Canopy_bg-1D4029_fg-F1E9D2_acc-E2953A.png
+  007 - Roosevelt Row_render.json
+```
+
+The sidecar lists which file got which palette. **Preview at** works alongside it, so you can
+compare mid-playback frames rather than unplayed ones.
+
+The list is greyed out unless Thumbnail only is ticked — comparing looks is the point, and six full
+video encodes of one recording is not something to trigger by accident. A custom sky would override
+every colour in the set and render them all identically, so that combination is refused rather than
+silently wasted.
+
+To add your own preset, edit `COLOR_PRESETS` at the top of `lss_studio/lss_presets.py` — nothing
+in the render code needs touching. You can also add a `"colors"` block to `lss_presets.json`,
+which overrides what ships in code and is never overwritten by an update.
+
+From the command line:
+
+```
+py lss_studio\lss_render.py recording.flac --colors Morning ...
+py lss_studio\lss_render.py recording.flac --colors Canopy --accent "#A8C24A" ...
+py lss_studio\lss_render.py recording.flac --background "#2B1B3D" --foreground "#EDE4F2" ...
+py lss_studio\lss_render.py --list-presets
+```
+
+`--background` and `--foreground` override whichever preset is chosen, and `--accent` overrides
+its accent. Give a background without a foreground and it derives a readable one for you, so a
+custom sky can never leave the skyline invisible.
+
+## Photo backgrounds
+
+Instead of a generated silhouette, a render can use your own photographs, cycling on a fixed
+interval with the slate composited on top. Tick **Use photographs instead of a generated
+silhouette** on the **Photo** tab, add the stills, and set how long each one holds.
+
+From the command line:
+
+```
+py lss_studio\lss_render.py recording.flac --photos "C:\stills\monsoon" ^
+   --photo-interval 180 --place "Roosevelt Row" --city "Phoenix, AZ" ^
+   --conditions "Clear 78F" --date 2026-09-08 --start "06:30 PM"
+```
+
+`--photos` takes a folder (sorted by name) or a comma-separated list, and its presence is what turns
+photo mode on. `--photo-interval` is seconds per photo, 180 by default. The cycle repeats until the
+recording ends and the last segment is cut to the audio's end.
+
+### It is a mode, not a silhouette
+
+A photo render has no envelope, no levels and no geometry — the recording decides only how long the
+cycle runs. Everything that shapes a generated silhouette is therefore refused rather than quietly
+ignored: `--style`, `--scale`, `--dynamics`, `--towers`, `--detail`, `--rows`, `--filled`,
+`--weather`, `--stars`, `--variants` and a part-way `--progress` are all errors here. In the window
+they simply grey out.
+
+The palette still reaches the slate: **Colours** sets the text colours and the scrim, and the
+background colour is otherwise unused because the photograph is the whole background.
+
+### What happens to each photo
+
+Every input is rotated by its EXIF orientation tag, converted to sRGB if it carries a different
+colour profile, centre-cropped to the frame's shape and downscaled with Lanczos.
+
+Photos are never upscaled. One too small for the frame is an error naming the file, its size and
+what was needed — checked for every output the render will write, before anything is built. The
+three ask different things, and a Spotify cover asks the most: it is a 3000×3000 square, so it needs
+3000px on the photo's **short** edge and will refuse stills that clear the video comfortably.
+
+### The slate over a photograph
+
+A palette's colours were chosen against measured contrast. A photograph answers to nothing, so the
+slate gets a **scrim** — a wash in the palette's own background colour, held at full strength across
+the slate and easing away below it.
+
+`--scrim` sets how heavy, from 0 to 1, default 0.65. That number is set from the worst case rather
+than by eye: a near-white hazy sky under the Night palette measures 1.01:1 bare, 3.52:1 at 0.55, and
+first clears the 4.5:1 the small slate lines want at 0.65. A dark photograph is barely touched by it.
+`--scrim 0` turns it off.
+
+Every render prints the weakest contrast it actually achieved, so you can see the number rather than
+guess at it:
+
+```
+  slate contrast 4.7:1 at its weakest (series)
+```
+
+### Which outputs carry the slate
+
+`--slate-scope`, or **Slate on** beside the Render button:
+
+| value | thumbnail and cover | video |
+|---|---|---|
+| `both` (default) | slate | slate |
+| `thumbnail` | slate | bare |
+| `none` | bare | bare |
+
+The clock shows the start time, as the thumbnail's always has. It does not tick through the video
+the way a generated render's does: there is no playhead in photo mode for it to be the label of, and
+a clock changing every minute would make every minute of the video a distinct frame — which is
+exactly what the encode below is built to avoid.
+
+### What it costs to encode
+
+Each photo is held for the whole interval, so the video is a handful of static segments rather than
+a stream of unique frames. Each distinct segment is encoded **once** and the full runtime is
+assembled by stream copy, so a three-hour video from four photos costs four segment encodes, not
+sixty:
+
+```
+4 photos on a 180s cycle: 60 segments over 180.0 min, 4 distinct to encode
+```
+
+One extra short encode appears when the recording is not a whole number of intervals — that is the
+truncated final segment.
+
+The setting that matters here is the keyframe interval, and it is not the one the generated renders
+use. `-g fps*10` was chosen against flat vector frames where a keyframe costs almost nothing; on a
+photograph each one is about 3 MB. Measured on a 180-second segment at 2560×1440, everything else
+held equal:
+
+| keyframes | time | size |
+|---|---|---|
+| every 10s (the generated setting) | 27.3s | 57.6 MB |
+| every 30s | 17.5s | 19.1 MB |
+| one per segment | 14.5s | 3.1 MB |
+
+Photo mode uses one per segment. Quality stays at the shipping CRF 16 — with every other frame a
+skip, a segment's size is essentially its single keyframe, so there is nothing to buy by spending
+it.
+
+What is left is the audio, which is re-encoded over the whole runtime as it always is. On a
+three-hour render that is around five minutes and is the dominant cost of the whole thing.
+
+### Not in this pass
+
+Crossfades between photos, Ken Burns motion and per-photo grading are all out — hard cuts only.
+They are not simply deferred: each makes every frame unique and forces a full-runtime encode, which
+takes a three-hour render from about six minutes back to thirty or more.
+
+## The slate over your own footage
+
+A third mode, and the smallest one: take a clip you shot, burn the slate onto it, write it back out.
+One video in, one video out. No generated skyline, no photo cycle, no audio.
+
+```
+py lss_studio\lss_render.py --video "C:\clips\IMG_3187.MOV" --slate-time 18:30 ^
+   --place "Downtown Phoenix" --city "Phoenix, AZ" --conditions "Clear 94F"
+```
+
+`--video` turns the mode on and `--slate-time` is the time frozen on the slate — typed as 24-hour
+`HH:MM`, drawn in the house `06:30 PM` form. There is **no audio argument**: the camera audio is
+stripped and the real audio gets muxed in later.
+
+Command line only for now; there is no tab for it in the window.
+
+### What it preserves, and what it refuses
+
+The clip's resolution and frame rate come out exactly as they went in. Nothing is resized, scaled or
+resampled — `--width`, `--height`, `--fps` and `--thumb-width` are all errors here, because there is
+nothing for them to decide.
+
+Two sources are refused outright rather than rendered badly:
+
+- **Narrower than 1280px.** Nothing would be upscaled — the slate is vector and scales to any
+  size — but 1280 is the design basis every margin and type size in it is written against, and
+  below that the layout is being shrunk past anything it was ever checked at.
+- **Taller than it is wide.** The slate is laid out across the top of a landscape frame. On a
+  vertical clip it centres in the middle of the shot, which looks deliberate and is not.
+
+A phone clip shot upright is stored landscape with a rotation tag, and that tag is read: the check
+and the overlay both use the size the clip actually *displays* at, not the size it is stored at.
+
+As with photo mode, everything that shapes a generated silhouette is an error rather than quietly
+ignored — `--style`, `--scale`, `--dynamics`, `--towers`, `--detail`, `--rows`, `--filled`,
+`--weather`, `--stars`, `--variants`, `--cover`, `--thumb-only` and a part-way `--progress`. What is
+left is what the slate says and what colour it is: `--series`, `--number`, `--place`, `--city`,
+`--conditions`, `--theme`, `--colors`, `--background`, `--foreground`, `--accent`, `--slate-mono`,
+`--scrim` and `--slate-position`.
+
+### Moving the slate off the subject
+
+```
+--slate-position top      (default, the layout every other render uses)
+--slate-position middle
+--slate-position bottom
+```
+
+Footage has a subject and the slate can land on it — a title running through the one antenna the
+shot is about. The three positions move the whole slate block as a unit, in design units, so it
+scales with the frame exactly as it always did:
+
+| position | where the block sits |
+|---|---|
+| `top` | as now — the `city · conditions` line rides the frame's middle |
+| `middle` | the block centred on the frame's middle |
+| `bottom` | the block's last line an 84-unit margin off the bottom edge |
+
+Clip mode only for now. Photo and generated renders refuse it rather than ignoring it.
+
+### The scrim is off by default here
+
+Unlike photo mode, `--scrim` defaults to **0** for a clip. A photograph is one fixed frame and the
+wash is cheap insurance; footage often has a sky that already carries the text, and the wash then
+reads as a haze around it. Turn it on per shot when one needs it:
+
+```
+--slate-position bottom --scrim 0.5
+```
+
+The wash follows the slate. At `top` it is the same top-down gradient photo mode uses; at `bottom`
+it is anchored to the bottom edge and fades upward; at `middle` it is a band that fades out on both
+sides. Wherever the slate goes, the wash is behind it and nowhere else.
+
+### Contrast is checked across the clip, not on one frame
+
+Photo mode measures the slate's contrast on the still it is about to write. Footage does not hold
+still — a pan off a dark wall onto a bright sky, headlights crossing the lower third, a three-minute
+shot that starts at dusk and ends at night. So the check samples frames spread across the clip,
+roughly one every 15 seconds, and reports the worst it finds and when:
+
+```
+  slate contrast: worst of 14 samples 3.8:1 (city · conditions, at 96s)
+  WARNING: below 4.5:1. Raise --scrim, or move --slate-position off this part of the frame.
+```
+
+This matters most with the scrim off, which is now the default, and most of all at
+`--slate-position bottom`, where on a street clip the slate sits over moving traffic.
+
+**Read that number as a sampled minimum, not a guarantee.** It says "worst of N samples" because
+that is exactly what it is. Traffic and headlights change the tone under the text on a one-second
+timescale, and a sample every fifteen seconds will step straight over some of it. The check narrows
+the odds; it does not close them. Look at the render.
+
+### How it encodes
+
+The slate is one static image over moving video, so the whole thing is a single ffmpeg `overlay`
+pass. Two details in it are measured rather than assumed.
+
+The composite happens in **RGB**. Blending in the delivery format instead puts the slate's coloured
+text through a half-resolution chroma plane exactly where its glyph edges are — measured against the
+reference at 1.43 levels of mean error with peaks of 81. In RGB it is 0.005, peak 2. The frame is
+subsampled once, at the end, as the encoder was always going to.
+
+And the quality settings are **not** photo mode's. Those were measured on a held frame, where every
+other frame is a skip; moving footage inverts that. Measured on a 20s excerpt of a 3840×2160 30fps
+22.5 Mb/s phone clip — 56.3 MB of source:
+
+| CRF | size | bitrate | PSNR | SSIM |
+|---|---|---|---|---|
+| 14 | 89.7 MB | 35.9 Mb/s | 48.64 | 0.9944 |
+| 16 | 63.2 MB | 25.3 Mb/s | 48.26 | 0.9939 |
+| 18 | 43.7 MB | 17.5 Mb/s | 47.80 | 0.9933 |
+| **20** | **29.7 MB** | **11.9 Mb/s** | **47.22** | **0.9926** |
+| 22 | 19.7 MB | 7.9 Mb/s | 46.55 | 0.9917 |
+
+Eight CRF points buy 2.1 dB and cost 4.5× the bytes. The source has already been through HEVC, so
+its fine detail is gone before x264 ever sees it and the extra bitrate is spent being precise about
+someone else's compression artefacts. CRF 16 — what the generated renders ship at — writes *more*
+than the source it is copying. **CRF 20** writes 53% of it at 47.2 dB, and that is the default.
+
+Preset is `medium`. Measured the same way, `slow` costs 39% more time to save 3.0% of the bytes and
+`fast` saves 8% of the time for 0.5% more of them — neither trade is worth taking here.
+
+### Looping one clip to fill a recording
+
+Give it an audio file **as well as** `--video` and it loops the clip to the audio's length, with the
+slate on screen only at the start and the end:
+
+```
+py lss_studio\lss_render.py "Downtown Phoenix.flac" ^
+   --video "Downtown Phoenix.mp4" --slate-time 18:30 ^
+   --slate-intro 2 --slate-outro 2 ^
+   --place "Downtown Phoenix" --city "Phoenix, AZ" --conditions "Clear 94F"
+```
+
+The audio file is the switch. `--video` on its own is still one pass over one clip with the slate on
+throughout, unchanged.
+
+```
+--slate-intro MINUTES|all   default 2   (0 turns it off)
+--slate-outro MINUTES|all   default 2   (0 turns it off)
+--thumb-at SECONDS          default 0   (which frame the thumbnail comes from)
+```
+
+The slate fades in and out over a second rather than popping. `--slate-position` and `--scrim` carry
+through to the intro and outro exactly as they do to a single-pass render. Intro plus outro longer
+than the audio is an error, not a silent merge. The clip repeats with a hard cut at the seam and the
+last repeat is truncated to the audio's end. A thumbnail is written as usual, slated, from the frame
+`--thumb-at` names.
+
+### Why it is cheap
+
+The body of the render is the same clip over and over, so **it is encoded once** and every bare
+repeat points at that one file. Only the minutes that actually carry the slate get an encoder pass of
+their own, and the bare stretches inside a partly-slated repeat are **stream-copied** out of the body
+rather than re-encoded.
+
+The measured example — a 17.6 min clip under a 159.9 min recording, 2 min intro and outro:
+
+| | |
+|---|---|
+| concat entries | 12 |
+| encoder passes | 4 (the body, the intro, and the outro in two halves) |
+| stream copies | 2 |
+| footage encoded | 21.6 min for a 159.9 min output — **7.4× less** |
+
+A stream copy has to start on a keyframe, and that is guaranteed rather than hoped for: the cut
+points are worked out from the schedule *before* the body is encoded, then handed to x264 as
+`-force_key_frames`, so an I-frame lands exactly there. **Nothing around the slate boundaries is
+re-encoded.** The cost is two extra I-frames in a seventeen-minute encode.
+
+The fourth encoder pass is worth explaining, because it is not a mistake. 159.9 min over a 17.6 min
+clip is nine full repeats and an 84.8 s tail — and that tail is *shorter than the two-minute outro*,
+so the outro spans the end of one repeat and the start of the next. That is two source ranges, not
+one, and the repeat it clips stops being interchangeable with its neighbours. The slate does not fade
+at that seam; it is one continuous appearance that happens to live in two files.
+
+No `+faststart` on a looped render. It rewrites the file end to end to move the moov atom forward,
+which on a twenty-gigabyte output means reading and writing twenty gigabytes a second time for a
+benefit — progressive HTTP streaming — that a file being uploaded never collects.
+
+Scratch files go to **local temp**, not the output folder: the body encode plus the pieces cut out of
+it is several gigabytes written, read and deleted, and the output folder is routinely a network drive
+or a synced folder.
+
+The contrast check samples only the stretches that actually show the slate. Four minutes out of a
+hundred and sixty, so sixteen samples rather than six hundred and forty.
+
+## Where renders go
+
+By default `Z:\Sounds of the City\LSS Renders`. To send one render somewhere else:
+
+```
+py lss_studio\lss_render.py recording.flac --outdir renders ...
+```
+
+To change the default permanently, either set `LSS_OUTDIR`:
+
+```
+setx LSS_OUTDIR "D:\LSS Renders"
+```
+
+or add an `"outdir"` key to `lss_presets.json`. `--outdir` wins over `LSS_OUTDIR`, which wins
+over the JSON key, which wins over the built-in default — so the flag stays a per-run switch and
+never goes sticky.
+
+## Naming
+
+Enter a **Number** and the render folder leads with it, zero-padded so the list still sorts
+correctly past episode 9:
+
+```
+003 - Phoenix Monsoon Ambience/
+  003 - Phoenix Monsoon Ambience_thumb.png
+  003 - Phoenix Monsoon Ambience.mp4
+  003 - Phoenix Monsoon Ambience_render.json
+```
+
+Leave the number blank and folders are named the way they always were. Either way an existing
+folder is never overwritten — a repeat render becomes `..._2`.
+
+## Command line
+
+`py lss_studio\lss_render.py --help` lists every flag, grouped as **slate**, **look**, **photo**,
+**shape** and **output** — the same groups the window's tabs use.
+
+### What changed in 1.11.0
+
+**Photo backgrounds** — `--photos`, or the new **Photo** tab. A set of stills cycling on a fixed
+interval with the slate on top, instead of a generated silhouette. See
+[Photo backgrounds](#photo-backgrounds). New `--photo-interval`, `--scrim` and `--slate-scope`.
+
+A three-hour video from four photos costs four segment encodes rather than sixty: each distinct
+segment is encoded once and the runtime is assembled by stream copy.
+
+Generated renders are untouched — every existing style, palette and playback state renders
+byte-for-byte what it did before, checked across 187 cases.
+
+### What changed in 1.9.0
+
+**The star field is now on by default.** Every render on a night palette gets one without asking;
+`--no-stars`, or the tickbox in the window, turns it off.
+
+Morning and Evening have no field, and now simply render without one rather than refusing. They still
+refuse when `--stars` names a field explicitly — that is what the flag is for now, and the split is
+the point: a render that never mentions stars is never interrupted by them, while someone who asked
+gets told why none appeared. A bright palette renders byte-for-byte what it did before.
+
+### What changed in 1.8.0
+
+A **star field**, off by default — `--stars`, or **Star field behind the silhouette** in the window.
+See [Stars](#stars). New `--no-twinkle` holds it steady in the video.
+
+> Turned **on by default** in 1.9.0 — see below.
+
+It is a background layer rather than silhouette geometry, so it works with every style, and the
+silhouette occludes it. Only the night palettes carry one, and each names which of its own colours
+the stars take rather than adding a fourth: near-white on the dark skies, the accent on Mist, and an
+error on Morning and Evening.
+
+Stars run on their own random stream, salted off the same envelope seed, so **turning them on cannot
+move a single building.** With stars off, every style renders byte-for-byte what it rendered in
+1.7.1, verified by SHA across 90 style, palette and playback-state combinations.
+
+One thing changed for renders that have no stars in them at all: the ffmpeg filter graph now goes in
+a file rather than on the command line, because Windows caps a command line at 32767 characters and
+fails outright past it. What it encodes is byte-identical, verified by SHA against the inline form.
+
+### What changed in 1.7.1
+
+`--style city` only, and only its tones. No flags, no defaults, no geometry.
+
+The near layer is now drawn in **the same two tones as the skyline behind it** — lit face 0.30,
+shadow face 0.54 — where 1.7.0 kept it a rung nearer at 0.00 and 0.27. Shipped that way, the band
+read as brighter and cleaner than the towers rather than as the same buildings closer up. The layers
+were never parted by tone in the first place: the cut of sky around every near shape does that, and
+it spends far more contrast than a rung of a ladder can. The corner seam between near buildings moved
+with the face it sits on, 0.55 → 0.78, or it would have vanished into it.
+
+Every other silhouette renders byte-for-byte what it rendered in 1.7.0, verified by SHA.
+
+### What changed in 1.7.0
+
+`--style city` is substantially redrawn. No defaults moved for any other style and no flag changed
+its name, but one flag changed what it reaches:
+
+| | Was | Now |
+|---|---|---|
+| `--towers` for `--style city` | set the block count | **no longer sets it** — city is always 27 blocks at ~45u; the flag now only changes how finely the recording is sampled before each block takes its loudest moment |
+
+`--towers` is unchanged for `blocks` and `houses`.
+
+What the style gained: a near layer of the same buildings seen closer — narrower, touching, deeply
+notched, more brightly lit than the towers; a per-column ceiling measured from the slate's own text
+so the skyline rises higher where nothing is above it; and masts proportional to their own building.
+See [Depth](#depth) and
+[How high the towers may go](#how-high-the-towers-may-go).
+
+Every other silhouette is untouched — `blocks`, `houses`, `topo`, `mountains`, `forest` and
+`mountains_forest` all render byte-for-byte what they rendered in 1.6.2, verified by SHA against a
+worktree of the shipped version across both playback states and both fill modes.
+
+### What changed in 1.6.0
+
+One default moved:
+
+| | Was | Now | Old behaviour |
+|---|---|---|---|
+| Sounds of the City silhouette | `blocks` | `city` | `--style blocks` |
+
+`city` is a **new style** rather than a richer `blocks`, so `blocks` itself is untouched — Sounds in
+Spaces still draws exactly what it drew, `--rows` still stacks, and `--style blocks` renders
+byte-for-byte what it rendered in 1.5.0. Nature and Towns are likewise byte-identical.
+
+### What changed in 1.5.0
+
+Three defaults moved. Each one changes what an existing command renders, and each has an explicit
+flag that brings the old behaviour back unchanged:
+
+| | Was | Now | Old behaviour |
+|---|---|---|---|
+| Sounds in Towns silhouette | `blocks` | `houses` | `--style blocks` |
+| Sounds of Nature silhouette | `topo` | `mountains_forest` | `--style topo` |
+| Thumbnail playback point | unplayed | fully played | `--progress 0` |
+
+In the window, the Silhouette dropdown now follows the series you pick until you choose a
+silhouette yourself, and **Preview at** starts at 100.
+
+Nothing about the nature silhouettes themselves changed — `--style mountains_forest --progress 1`
+renders byte-for-byte what it rendered in 1.4.2. Only which style Sounds of Nature reaches for by
+default is different.
+
+### What changed in 1.3.0
+
+Two things:
+
+- **`--preset` is now `--series`.** It always chose a series, while `--colors` chooses a colour
+  preset, so "preset" meant two different things. `--preset` still works and always will; nothing
+  you have written needs updating.
+- **`--accent2` is gone.** Nothing ever drew with it — the playhead's second colour comes from an
+  occasion's `cycle`, not from `accent2`. A script passing `--accent2` will now error; drop the
+  flag and the render is identical. An `"accent2"` in your `lss_presets.json` is still read
+  without complaint, and those colours are still offered in the colour dropdowns as that preset's
+  "highlight".
+
+The render sidecar's `colors` field is likewise now `color_preset`. Older sidecars are unaffected.
+
+## Updates
+
+The app checks this repository for a newer version each time it opens. If one
+exists it asks whether to update; if you say yes it downloads the new files and
+uses them next launch. If GitHub is unreachable it just runs the copy you have.
+
+Your `lss_presets.json` is **never** overwritten by an update, so any presets
+you add stay yours. The previous version is kept in `lss_studio/previous/`; to
+roll back, run `py lss_studio\lss_update.py --rollback` from the repo folder.
+
+## Files
+
+```
+Location Sound Studios.bat   launch
+Setup.bat                    one-time setup
+lss_studio/
+  lss_studio.py              the window
+  lss_render.py              render engine
+  lss_scene.py               generative silhouette shapes
+  lss_draw.py                drawing
+  lss_presets.py             preset loading
+  lss_presets.json           YOUR presets (edit freely)
+  lss_update.py              self-update
+  VERSION                    current version
+tools/                       development scripts, not part of the app
+```
+
+See `RELEASING.md` for how to publish an update.
