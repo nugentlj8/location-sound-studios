@@ -202,4 +202,28 @@ py lss_studio/lss_render.py --list-presets
 `--thumb-only` skips the video encode and renders a still in about a second, which is how
 every image on this page was made.
 
+---
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — source-available, not open source.
+
+**Go ahead and**, for any non-commercial purpose: read it, run it, modify it, share your
+changes. Personal projects, study, hobby channels, and use by schools, charities and public
+research bodies are all explicitly permitted by the license.
+
+**Please don't** use it for commercial advantage without asking first — a monetized channel,
+a paid service, or bundling it into a product. If you want to do any of those, get in touch
+at **business@locationsoundstudios.com**. I'm happy to talk.
+
+The license covers the **source code**. It does not hand over:
+
+- the name *Location Sound Studios*, the series names, the icon or the wordmark;
+- my published recordings, videos and thumbnails, which are my copyright separately from
+  anything in this repository.
+
+A style isn't something a license can own, and I wouldn't want it to be. If the look gives
+you an idea, go and make something of your own — I just don't want my renderer run as
+somebody else's business.
+
 **[Full user manual →](docs/MANUAL.md)** · [Release process](RELEASING.md) · [Development scripts](tools/README.md)
