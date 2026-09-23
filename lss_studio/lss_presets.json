@@ -1,5 +1,5 @@
 {
-  "_comment": "Edit this file to add or change presets. Restart the app to pick up changes. 'accent2' is optional and is not drawn - it is offered in the colour dropdowns as that preset's 'highlight'. 'geometry' is 'steps' or 'curves'. 'scene' is 'town' or 'nature' and decides which silhouette styles the series can use - omit it and it is worked out from the series name, then from the geometry. 'suffix' is appended to the series name. 'cycle' is a list of colours the played line runs through, changing every 'cycle_minutes'.",
+  "_comment": "Edit this file to add or change presets. Restart the app to pick up changes. 'accent2' is optional and is not drawn - it is offered in the colour dropdowns as that preset's 'highlight'. 'geometry' is 'steps' or 'curves'. 'scene' is 'town' or 'nature' and decides which silhouette styles the series can use - omit it and it is worked out from the series name, then from the geometry. 'suffix' is appended to the series name. 'cycle' is a list of colours the played line runs through, changing every 'cycle_minutes'. 'layouts' sets where the slate text sits and how big it is: 'landscape' is the 16:9 slate every render draws, 'vertical' is the 1080x1920 Shorts frame (--vertical). All positions and sizes are design units - the frame is 1280 wide in landscape and 'design_width' wide in vertical - so they describe a shape, not pixels. 'safe_top' and 'safe_bottom' are fractions of the frame height the vertical TEXT must stay out of; a line that enters one is an error naming it. Leave a field out and the built-in value is used.",
   "series": {
     "Sounds of the City": {
       "name": "SOUNDS OF THE CITY",
@@ -68,6 +68,50 @@
       "accent": "#E08A2B",
       "accent2": "#AA6DF1",
       "suffix": "SPECIAL EDITION"
+    }
+  },
+  "layouts": {
+    "landscape": {
+      "margin": 84,
+      "series_size": 27,
+      "series_tracking": 11,
+      "series_baseline": 150,
+      "number_gap": 40,
+      "title_size": 104,
+      "title_tracking": 7,
+      "title_baseline": 296,
+      "tagline_size": 31,
+      "tagline_tracking": 8,
+      "tagline_baseline": 360,
+      "clock_size": 31
+    },
+    "vertical": {
+      "width": 1080,
+      "height": 1920,
+      "design_width": 720,
+      "safe_top": 0.15,
+      "safe_bottom": 0.2,
+      "ground_lift": 0,
+      "margin": 56,
+      "top": 200,
+      "badge_size": 24,
+      "badge_tracking": 5,
+      "badge_pad_x": 14,
+      "badge_pad_y": 9,
+      "badge_gap": 30,
+      "series_size": 30,
+      "series_tracking": 10,
+      "series_gap": 34,
+      "title_size": 110,
+      "title_tracking": 5,
+      "title_lines": 2,
+      "title_line_gap": 10,
+      "title_gap": 30,
+      "tagline_size": 34,
+      "tagline_tracking": 7,
+      "tagline_gap": 24,
+      "footer_size": 30,
+      "footer_tracking": 6
     }
   }
 }
