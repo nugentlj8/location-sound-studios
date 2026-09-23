@@ -4,6 +4,9 @@ Everything is drawn at SS times the final size and downsampled with LANCZOS,
 which gives clean antialiasing on curves and text without a vector backend.
 """
 
+import functools
+import os
+
 from PIL import Image, ImageChops, ImageDraw, ImageFont, PngImagePlugin
 
 SS = 2
@@ -76,12 +79,65 @@ def draw_line(dr, y0, amp, lv, W, col, sw, mode="steps"):
         x += w
 
 
+# Where a character the slate font lacks is borrowed from, in order. Barlow
+# Condensed carries Latin and little else - no ●, no ★, no № - and drawing one
+# anyway gets its .notdef, which in Barlow is a question mark. Arial Bold first
+# because it matches the slate's weight; Segoe UI Symbol for the wider symbol
+# set Arial does not have. A path that does not exist on this machine is skipped.
+FALLBACK_FONTS = [
+    "C:/Windows/Fonts/arialbd.ttf",
+    "C:/Windows/Fonts/seguisym.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+]
+
+
+@functools.lru_cache(maxsize=None)
+def has_glyph(font_path, ch):
+    """True if the font actually draws ch rather than its .notdef box.
+
+    Compared against a codepoint no font defines, since a missing glyph and
+    the .notdef are the same bitmap. Size-independent, so probed once at 48.
+    """
+    try:
+        f = ImageFont.truetype(font_path, 48)
+    except OSError:
+        return False
+    a = f.getmask(ch, mode="L")
+    b = f.getmask("\U0010FFFD", mode="L")
+    return (a.size, bytes(a)) != (b.size, bytes(b))
+
+
+@functools.lru_cache(maxsize=None)
+def _glyph_font(font_path, ch):
+    """The font ch is drawn in: the slate font whenever it has the glyph -
+    which is every character a slate has ever carried, so those render exactly
+    as they did - and otherwise the first fallback that does."""
+    if ch == " " or has_glyph(font_path, ch):
+        return font_path
+    for p in FALLBACK_FONTS:
+        if p != font_path and os.path.exists(p) and has_glyph(p, ch):
+            return p
+    return font_path             # nothing has it: the .notdef is the honest answer
+
+
+@functools.lru_cache(maxsize=64)
+def _font(font_path, px):
+    return ImageFont.truetype(font_path, px)
+
+
 def text_run(dr, s, size, tracking, x, baseline, col, font_path):
-    """Per-glyph placement so tracking is exact. Returns the ending x."""
-    f = ImageFont.truetype(font_path, max(1, int(round(size * SS))))
+    """Per-glyph placement so tracking is exact. Returns the ending x.
+
+    Per glyph is also what makes the fallback free: each character picks its
+    own font, so a ● borrowed from Arial sits in a Barlow run on the same
+    baseline with the same tracking, and text_width() measures it the same way.
+    """
+    px_size = max(1, int(round(size * SS)))
     c = rgb(col)
     px = x * SS
     for ch in s:
+        f = _font(_glyph_font(font_path, ch), px_size)
         if ch != " ":
             dr.text((px, baseline * SS), ch, font=f, fill=c, anchor="ls")
         px += f.getlength(ch) + tracking * SS
@@ -89,8 +145,9 @@ def text_run(dr, s, size, tracking, x, baseline, col, font_path):
 
 
 def text_width(s, size, tracking, font_path):
-    f = ImageFont.truetype(font_path, max(1, int(round(size * SS))))
-    return (sum(f.getlength(c) for c in s) + tracking * SS * (len(s) - 1)) / SS
+    px_size = max(1, int(round(size * SS)))
+    return (sum(_font(_glyph_font(font_path, c), px_size).getlength(c) for c in s)
+            + tracking * SS * (len(s) - 1)) / SS
 
 
 def draw_slate(dr, cfg, W, k, dy, number, time_text, fg, slate, font_path):
@@ -124,12 +181,15 @@ def draw_slate(dr, cfg, W, k, dy, number, time_text, fg, slate, font_path):
         strack *= 0.94
     text_run(dr, cfg["series"], ssize, strack, M, (150 + dy) * k, fg, font_path)
     if n:
-        text_run(dr, n, 27 * k, 11 * k, W - M - nw, (150 + dy) * k, slate, font_path)
+        # --number-color outranks both the accent and --slate-mono: it is the
+        # one run someone asked for by name. Blank leaves it with the others
+        text_run(dr, n, 27 * k, 11 * k, W - M - nw, (150 + dy) * k,
+                 cfg.get("number_color") or slate, font_path)
 
     text_run(dr, cfg["place"], 104 * k, 7 * k, M, (296 + dy) * k, fg, font_path)
     text_run(dr, f'{cfg["city"]}  ·  {cfg["conditions"]}',
              31 * k, 8 * k, M, (360 + dy) * k, slate, font_path)
-    if time_text:
+    if time_text:                    # blank start time: no clock at all
         w = text_width(time_text, 31 * k, 0, font_path)
         text_run(dr, time_text, 31 * k, 0, W - M - w, (360 + dy) * k, slate,
                  font_path)

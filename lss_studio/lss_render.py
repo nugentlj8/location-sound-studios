@@ -369,13 +369,22 @@ def slate_boxes(cfg, dh=720.0, dy=None):
     out.append((M, M + D.text_width(cfg["place"], 104.0, 7.0, FONT), 296.0 + dy))
     cc = f'{cfg["city"]}  ·  {cfg["conditions"]}'
     out.append((M, M + D.text_width(cc, 31.0, 8.0, FONT), 360.0 + dy))
-    # The clock. Reserved whatever this render is: the thumbnail draws it and
-    # the video has ffmpeg draw it in the same place, so the column is spoken
-    # for either way. Measured off a full-width sample rather than this
-    # render's start time, because the video's clock runs all night.
-    tw = D.text_width("00:00 PM", 31.0, 0.0, FONT)
-    out.append((1280.0 - M - tw, 1280.0 - M, 360.0 + dy))
+    # The clock. Reserved whenever there is one, thumbnail or video: the
+    # thumbnail draws it and the video has ffmpeg draw it in the same place, so
+    # the column is spoken for either way. Measured off a full-width sample
+    # rather than this render's start time, because the video's clock runs all
+    # night. With no time given there is no clock anywhere, and the column is
+    # handed back to the ceiling and the star field.
+    if has_clock(cfg):
+        tw = D.text_width("00:00 PM", 31.0, 0.0, FONT)
+        out.append((1280.0 - M - tw, 1280.0 - M, 360.0 + dy))
     return out
+
+
+def has_clock(cfg):
+    """True if this render shows a time at all. A blank --start (or, for a clip,
+    a blank --slate-time) leaves the clock off every output."""
+    return bool((cfg.get("start") or cfg.get("slate_time") or "").strip())
 
 
 def ff_escape(t):
@@ -413,15 +422,13 @@ def _drawtext_ink_top(size, sample):
 
 
 def has_glyph(ch):
-    """True if the loaded font actually draws ch rather than a .notdef box."""
-    from PIL import ImageFont
-    try:
-        f = ImageFont.truetype(FONT, 48)
-        a = f.getmask(ch, mode="L")
-        b = f.getmask("\uf8ff\u0000"[0], mode="L")   # a codepoint no font defines
-        return bytes(a) != bytes(b)
-    except Exception:
-        return False
+    """True if the loaded font actually draws ch rather than a .notdef box.
+
+    Asks the SLATE font only. The drawing borrows a missing glyph from a
+    fallback font (lss_draw.FALLBACK_FONTS), but the numero-sign style keeps
+    its 'NO.' swap: that is a choice about how the number reads, made before
+    anything is drawn."""
+    return D.has_glyph(FONT, ch)
 
 
 def format_number(raw, style="No."):
@@ -484,16 +491,16 @@ def _thumbnail(cfg, lv, tw, th, out, work, frac=1.0):
     an encode. The ends need only one layer, so they skip the composite."""
     if frac >= 1.0:                      # fully played: the accent layer IS it
         return compose(cfg, lv, tw, th, cfg["accent"], out,
-                       time_text=cfg["start"], played=True)
+                       time_text=cfg.get("start"), played=True)
     if frac > 0:
         b = compose(cfg, lv, tw, th, cfg["foreground"],
-                    os.path.join(work, "_t_bone.png"), time_text=cfg["start"])
+                    os.path.join(work, "_t_bone.png"), time_text=cfg.get("start"))
         c = compose(cfg, lv, tw, th, cfg["accent"],
-                    os.path.join(work, "_t_clay.png"), time_text=cfg["start"],
+                    os.path.join(work, "_t_clay.png"), time_text=cfg.get("start"),
                     played=True)
         return D.progress_composite(b, c, frac, out)
     return compose(cfg, lv, tw, th, cfg["foreground"], out,
-                   time_text=cfg["start"])
+                   time_text=cfg.get("start"))
 
 
 COVER_PX = 3000                  # Spotify's ceiling. Its floor is 1400, and
@@ -538,7 +545,7 @@ def _cover(cfg, db, lv, style, scale, dyn, out):
                                      twinkle=not cfg.get("no_twinkle"),
                                      dh=COVER_DH)
     return compose(ccfg, lv, COVER_PX, COVER_PX, ccfg["accent"], out,
-                   time_text=cfg["start"], played=True, save=D.png_meta())
+                   time_text=cfg.get("start"), played=True, save=D.png_meta())
 
 
 PHOTO_INTERVAL = getattr(photo_mod, "DEFAULT_INTERVAL", 180.0)
@@ -777,7 +784,8 @@ def _slate_names(cfg):
     """The slate's lines, in the order slate_boxes() returns them."""
     n = format_number(cfg.get("number", ""), cfg.get("number_style", "No."))
     return (["series"] + (["number"] if n else [])
-            + ["place", "city · conditions", "time"])
+            + ["place", "city · conditions"]
+            + (["time"] if has_clock(cfg) else []))
 
 
 def _slate_legibility(img, cfg, W, H, dy=None):
@@ -1084,18 +1092,23 @@ def epoch_for(datestr, timestr):
 
 def build_video(cfg, paths, audio, dur, W, H, out, fps=10, crf=None,
                 on_progress=None):
-    ep = epoch_for(cfg["date"], cfg["start"])
-    cb = clock_box(W, H)
-    clock_size, cy, rm = cb["size"], cb["y"], cb["right_margin"]
-    fp = FONT.replace("\\", "/").replace(":", "\\:")
     D = f"{dur:.3f}"
+    if has_clock(cfg):
+        ep = epoch_for(cfg["date"], cfg["start"])
+        cb = clock_box(W, H)
+        clock_size, cy, rm = cb["size"], cb["y"], cb["right_margin"]
+        fp = FONT.replace("\\", "/").replace(":", "\\:")
+        clock = (f"drawtext=fontfile='{fp}':fontsize={clock_size}"
+                 f":fontcolor={cfg['accent'][1:]}:x=(w-tw-{rm}):y={cy}"
+                 f":text='%{{pts\\:gmtime\\:{ep}\\:%I\\\\\\:%M %p}}'")
+    else:
+        clock = "null"               # the chain below still needs a head
     fc = (
         f"color=c=black:s={W}x{H}:r={fps}[b1];"
         f"[b1][3:v]overlay=x='{W}*t/{D}-{W}':y=0,format=gray[m1];"
         f"[1:v][m1]alphamerge[clayA];"
         f"[0:v][clayA]overlay=0:0[s1];"
-        f"[s1]drawtext=fontfile='{fp}':fontsize={clock_size}:fontcolor={cfg['accent'][1:]}"
-        f":x=(w-tw-{rm}):y={cy}:text='%{{pts\\:gmtime\\:{ep}\\:%I\\\\\\:%M %p}}'"
+        f"[s1]{clock}"
         + blink_layers(cfg, W, H, dur)
         + star_layers(cfg, W, H, dur, base=paths.get("probe")) + "[v]"
     )
@@ -1290,8 +1303,11 @@ def slate_clock(s):
     A clip render is one still slate among a catalogue of them, and the one
     frame in 24-hour time would be the one that looks wrong. The 12-hour form
     is accepted too, so whichever way it is typed lands in the same place.
+    Blank stays blank: the slate goes out with no clock on it.
     """
     s = " ".join((s or "").upper().split())
+    if not s:
+        return ""
     for fmt in ("%H:%M", "%I:%M %p", "%I:%M%p"):
         try:
             return datetime.datetime.strptime(s, fmt).strftime("%I:%M %p")
@@ -1426,8 +1442,6 @@ def _video_check(cfg):
     if p is not None and float(p) != 1.0:
         return ("--progress has no meaning with --video: there is no playhead "
                 "to draw part-way along.")
-    if not (cfg.get("slate_time") or "").strip():
-        return "--video needs --slate-time, e.g. --slate-time 18:30."
     return None
 
 
@@ -1670,6 +1684,7 @@ def _video_sidecar(cfg, info, worst, where, when, samples, out):
             "foreground": cfg.get("foreground", BONE),
             "accent": cfg.get("accent"),
             "slate_mono": cfg.get("slate_mono", False),
+            "number_color": cfg.get("number_color") or "",
             "slate_position": cfg.get("slate_position", "top"),
             "scrim": float(cfg.get("scrim", scrim_default(cfg))),
             # named "sampled_" on purpose: it is the worst of N frames, not the
@@ -2253,6 +2268,7 @@ def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None, cover=None,
             "cycle": cfg.get("cycle", []),
             "cycle_minutes": cfg.get("cycle_minutes"),
             "slate_mono": cfg.get("slate_mono", False),
+            "number_color": cfg.get("number_color") or "",
         },
         "shape": {
             "scale": scale,
@@ -2332,7 +2348,7 @@ def _run_photo(cfg, slug, outdir, work, progress, on_progress, stage):
     # video, so 'thumbnail' means every IMAGE this render writes. Only the
     # encode is what 'thumbnail' takes the slate away from.
     still_slate = scope in ("both", "thumbnail")
-    tt = cfg["start"] if still_slate else None
+    tt = cfg.get("start") if still_slate else None
     progress("Building thumbnail…")
     thumb, under = _photo_frame(cfg, photos[0], tw, th, still_slate,
                                 time_text=tt, measure=True,
@@ -2656,7 +2672,10 @@ def main():
     g.add_argument("--city")
     g.add_argument("--conditions")
     g.add_argument("--date", help="YYYY-MM-DD")
-    g.add_argument("--start", help="e.g. 06:30 PM")
+    g.add_argument("--start", default="",
+                   help="e.g. 06:30 PM. Leave it out for no clock: nothing "
+                        "is drawn in the time slot of the thumbnail or the "
+                        "video, and --date is then not needed")
     g.add_argument("--number", default="")
     g.add_argument("--number-style", default="No.", choices=list(NUM_STYLES))
 
@@ -2744,6 +2763,10 @@ def main():
     g.add_argument("--slate-mono", action="store_true",
                    help="draw the small slate text in the silhouette colour, "
                         "not the accent")
+    g.add_argument("--number-color", default="", metavar="#RRGGBB",
+                   help="colour for the number alone, e.g. #F2D289. Wins over "
+                        "both the accent and --slate-mono; blank keeps it "
+                        "with the rest of the small slate text")
     g = a.add_argument_group(
         "photo", "photographs instead of a generated silhouette")
     g.add_argument("--photos", default="", metavar="PATHS",
@@ -2791,7 +2814,7 @@ def main():
                         "the house 12-hour form whichever way it is typed. "
                         "Static, like photo mode's - a still slate is what "
                         "makes the overlay a single image and the encode one "
-                        "pass. Required with --video")
+                        "pass. Leave it out for a slate with no clock")
     g.add_argument("--slate-intro", default=str(SLATE_INTRO_DEFAULT),
                    metavar="MINUTES",
                    help=f"how long the slate shows at the START of a looped "
@@ -2889,19 +2912,22 @@ def main():
         return
     # A clip render takes no audio file and has no live clock, so neither the
     # recording nor the date and start time it would be stamped from are
-    # required: --slate-time carries the only time on the frame.
-    need = (("video", "place", "city", "conditions", "slate_time")
+    # required: --slate-time carries the only time on the frame. Nothing needs
+    # a time at all - a blank one is a slate with no clock - and the date is
+    # only ever read to start the video's clock, so it goes with --start.
+    need = (("video", "place", "city", "conditions")
             if n.video else
-            ("audio", "place", "city", "conditions", "date", "start"))
+            ("audio", "place", "city", "conditions")
+            + (("date",) if n.start else ()))
     missing = [k for k in need if not getattr(n, k)]
     if missing:
         a.error("missing required: "
                 + ", ".join("audio" if m == "audio" else "--" + m.replace("_", "-")
                             for m in missing))
-    for flag in ("accent", "background", "foreground"):
+    for flag in ("accent", "background", "foreground", "number_color"):
         v = getattr(n, flag)
         if v and not presets_mod.valid_hex(v):
-            a.error(f"--{flag}: '{v}' is not a colour like #CF7A34")
+            a.error(f"--{flag.replace('_', '-')}: '{v}' is not a colour like #CF7A34")
     if n.color_preset not in presets_mod.color_preset_names(P):
         a.error(f"--colors: unknown preset '{n.color_preset}'. Choose from: "
                 + ", ".join(presets_mod.color_preset_names(P)))

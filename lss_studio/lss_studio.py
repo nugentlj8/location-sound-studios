@@ -147,7 +147,8 @@ class App:
         today = datetime.date.today().isoformat()
         self.date = self._entry(slate, sr, "Recording date", today); sr += 1
         self.start = self._entry(slate, sr, "Start time", "06:30 PM"); sr += 1
-        ttk.Label(slate, text="Time the published file begins — after any trimming.",
+        ttk.Label(slate, text="Time the published file begins — after any "
+                              "trimming. Blank for no clock.",
                   foreground=MUTED).grid(row=sr, column=1, sticky="w", pady=(0, 8))
         sr += 1
         ttk.Label(slate, text="Number").grid(row=sr, column=0, sticky="w",
@@ -260,6 +261,7 @@ class App:
         self.cust_bg = self._color_row(colour, cr, "Custom sky"); cr += 1
         self.cust_fg = self._color_row(colour, cr, "Custom silhouette"); cr += 1
         self.cust_a = self._color_row(colour, cr, "Custom accent"); cr += 1
+        self.cust_num = self._color_row(colour, cr, "Custom number"); cr += 1
         ttk.Label(colour, text="Pick a colour already in use, or type #RRGGBB. "
                                "Blank follows the colours above.",
                   foreground=MUTED).grid(row=cr, column=1, sticky="w", pady=(0, 8))
@@ -761,14 +763,18 @@ class App:
         for w, n in ((self.place, "Place"), (self.city, "City"), (self.cond, "Conditions")):
             if not w.get().strip():
                 return f"{n} cannot be empty."
-        try:
-            datetime.datetime.strptime(self.date.get().strip(), "%Y-%m-%d")
-        except ValueError:
-            return "Recording date must look like 2026-07-23."
-        try:
-            datetime.datetime.strptime(self.start.get().strip().upper(), "%I:%M %p")
-        except ValueError:
-            return "Start time must look like 06:30 PM."
+        # A blank start time is allowed: the render then shows no clock at all,
+        # and the date - read only to start that clock - stops mattering too
+        if self.start.get().strip():
+            try:
+                datetime.datetime.strptime(self.date.get().strip(), "%Y-%m-%d")
+            except ValueError:
+                return "Recording date must look like 2026-07-23."
+            try:
+                datetime.datetime.strptime(self.start.get().strip().upper(),
+                                           "%I:%M %p")
+            except ValueError:
+                return "Start time must look like 06:30 PM, or be left blank."
         if self.photo_mode.get():
             if not self._picked_photos():
                 return "Photo mode is on but no photographs have been added."
@@ -870,7 +876,7 @@ class App:
             return
         custom = {"accent": self.cust_a.get(),
                   "background": self.cust_bg.get(), "foreground": self.cust_fg.get()}
-        for val in custom.values():
+        for val in list(custom.values()) + [self.cust_num.get()]:
             if val.strip() and not lss_presets.valid_hex(val):
                 messagebox.showwarning("Check the form",
                                        f"'{val}' is not a colour like #CF7A34.")
@@ -895,13 +901,13 @@ class App:
         # already chosen against measured contrast on rendered frames, and some
         # lean on hue rather than luminance, so warning about them every render
         # would be noise.
-        hand = custom["accent"].strip()
-        if hand and lss_presets.contrast_on(hand, bg) < 4.5:
-            if not messagebox.askyesno(
-                    "Low contrast",
-                    f"{hand} is dim against the background and may look muddy "
-                    "at thumbnail size.\n\nRender anyway?"):
-                return
+        for hand in (custom["accent"].strip(), self.cust_num.get().strip()):
+            if hand and lss_presets.contrast_on(hand, bg) < 4.5:
+                if not messagebox.askyesno(
+                        "Low contrast",
+                        f"{hand} is dim against the background and may look "
+                        "muddy at thumbnail size.\n\nRender anyway?"):
+                    return
         scene = lss_presets.series_scene(self.series.get(), PRESETS)
         frac = self._preview_frac()[0]
         if self.photo_mode.get():
@@ -961,6 +967,7 @@ class App:
             "thumb_only": bool(self.thumbonly.get()),
             "cover": bool(self.cover.get()),
             "slate_mono": bool(self.mono.get()),
+            "number_color": self.cust_num.get().strip().upper(),
             "outname": self.outname.get().strip(),
         }
         self.busy = True

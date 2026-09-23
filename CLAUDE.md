@@ -244,6 +244,8 @@ and every running copy of the app picks it up on its next launch via `lss_update
   are likewise derived from the preset data rather than listed by hand. A `stars` key is not a
   fourth either: it holds the *role name* of whichever of the three the star field takes
   (`star_color()`), and its presence is also what says the palette may have stars at all.
+  `number_color` (`--number-color`) is not a fourth either: an optional per-render override for
+  the slate's number run alone, read in `draw_slate()` and nowhere else, never part of a palette.
   Weather adds no colour either: `lss_draw.weather_tones()` bisects a tone out of the sky and
   the foreground at a target contrast ratio, so a cloud is the palette's own ink heavily washed
   toward its own sky. The direction falls out — the foreground is on the lighter side of the sky
@@ -265,4 +267,6 @@ and every running copy of the app picks it up on its next launch via `lss_update
   the studio's network.
 - Fonts: resolved once at `run()` start via `find_font()`, which checks `LSS_FONT` env var first,
   then falls back through a short hardcoded list (Barlow Condensed Bold preferred, Arial Bold
-  fallback on Windows).
+  fallback on Windows). Separately, a single CHARACTER the slate font lacks (Barlow has no `●`)
+  is drawn from `lss_draw.FALLBACK_FONTS` per glyph in `text_run()`/`text_width()`; a character
+  the slate font has always uses it, which is what keeps existing slates byte-identical.

@@ -35,7 +35,7 @@ it decides:
 
 | Tab | What it decides |
 |---|---|
-| **Slate** | what the frame says — place, city, conditions, date, start time, number, file name |
+| **Slate** | what the frame says — place, city, conditions, date, start time (blank for no clock), number, file name |
 | **Look** | series, silhouette, detail, and the two silhouette treatments |
 | **Colour** | occasion, colours, custom colours, and the Compare list |
 | **Shape** | how loudness becomes height — scaling, dynamics, tower width, stacked rows |
@@ -545,7 +545,21 @@ still works and switches the dropdown to **Custom…**. Type a code that happens
 named colours and the dropdown says so. The swatch beside each box shows the colour you'll get.
 
 The list is read from the presets themselves, so a colour preset you add to `COLOR_PRESETS` or a
-series you add to `lss_presets.json` appears in all three dropdowns with no further work.
+series you add to `lss_presets.json` appears in all four dropdowns with no further work.
+
+**Custom number** (`--number-color #RRGGBB`) colours the number alone — `NO. 007`, `EP. 7` — and
+leaves the city line and the clock in the accent. It wins over **Monochrome slate** too, since it is
+the one run you asked for by name. Blank keeps the number with the rest of the small slate text. It
+is not a fourth frame colour: it reaches the number and nothing else, so the silhouette, the
+playhead and the Compare list are untouched by it.
+
+### No clock
+
+Leave **Start time** blank (or `--start` out on the command line) and the render shows no time at
+all — not on the thumbnail, the cover, or the video, where the live clock is simply not drawn. The
+date is only ever read to start that clock, so it is not needed either. On the `city` silhouette the
+corner the clock would have held goes back to the towers, so the ones under it may stand a little
+taller than they would with a time on the slate.
 
 ### Comparing several colours at once
 
@@ -719,7 +733,8 @@ py lss_studio\lss_render.py --video "C:\clips\IMG_3187.MOV" --slate-time 18:30 ^
 ```
 
 `--video` turns the mode on and `--slate-time` is the time frozen on the slate — typed as 24-hour
-`HH:MM`, drawn in the house `06:30 PM` form. There is **no audio argument**: the camera audio is
+`HH:MM`, drawn in the house `06:30 PM` form. Leave `--slate-time` out for a slate with no clock on
+it. There is **no audio argument**: the camera audio is
 stripped and the real audio gets muxed in later.
 
 Command line only for now; there is no tab for it in the window.
@@ -746,7 +761,7 @@ ignored — `--style`, `--scale`, `--dynamics`, `--towers`, `--detail`, `--rows`
 `--weather`, `--stars`, `--variants`, `--cover`, `--thumb-only` and a part-way `--progress`. What is
 left is what the slate says and what colour it is: `--series`, `--number`, `--place`, `--city`,
 `--conditions`, `--theme`, `--colors`, `--background`, `--foreground`, `--accent`, `--slate-mono`,
-`--scrim` and `--slate-position`.
+`--number-color`, `--scrim` and `--slate-position`.
 
 ### Moving the slate off the subject
 
@@ -929,6 +944,13 @@ correctly past episode 9:
 
 Leave the number blank and folders are named the way they always were. Either way an existing
 folder is never overwritten — a repeat render becomes `..._2`.
+
+The number doesn't have to be a number. With the style set to **None (number only)**, `● LIVE`
+puts exactly that in the top right. Symbols go in the frame but not the folder name, so that one
+lands in `LIVE - Roosevelt Row/`. Barlow Condensed has no `●`, `★` or `▶`, so any character the slate
+font lacks is borrowed, one character at a time, from Arial Bold and then Segoe UI Symbol. It sits
+on the same baseline with the same letter spacing. This works in every slate field, not just the
+number.
 
 ## Command line
 
