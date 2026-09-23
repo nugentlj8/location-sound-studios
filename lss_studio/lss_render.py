@@ -1166,6 +1166,14 @@ def video_layers(cfg, lv, W, H, d, dur=0):
                                       _weather=_clouds_only(cfg.get("_weather"))),
                                  lv, W, H, fg,
                                  os.path.join(d, "_probe.png"))
+    if (cfg.get("_weather") or {}).get("rain") and not cfg.get("no_shimmer"):
+        # The rain's own reference, and it is NOT the stars' one: this frame
+        # keeps the stars and the beacons LIT, because a rain box may not land
+        # on either - it would erase a star, and blank a light the blink
+        # filters are about to draw. Everything but the rain, in other words.
+        paths["rainprobe"] = compose(
+            dict(cfg, _weather=_clouds_only(cfg["_weather"])), lv, W, H, fg,
+            os.path.join(d, "_rainprobe.png"), lights_on=True)
     return paths
 
 
@@ -1325,6 +1333,76 @@ def star_layers(cfg, W, H, dur, base=None):
     return "," + ",".join(out)
 
 
+def _rain_box(streak, k, lw):
+    """A streak's rectangle in pixels: its ink, half the line either side, and
+    one pixel for the LANCZOS ring - STAR_PAD's reason, on a line."""
+    x0, y0, x1, y1 = (v * k for v in streak[:4])
+    return (int(math.floor(min(x0, x1) - lw)) - STAR_PAD,
+            int(math.floor(min(y0, y1) - lw)) - STAR_PAD,
+            int(math.ceil(max(x0, x1) + lw)) + STAR_PAD,
+            int(math.ceil(max(y0, y1) + lw)) + STAR_PAD)
+
+
+def _visible_rain(streaks, path, k, lw, bg):
+    """Indices of the streaks whose whole rectangle is bare sky in `path`.
+
+    _visible_stars()' rule and for its reason: a drawbox paints a flat
+    rectangle and cannot know what it lands on. Stricter in practice, since a
+    streak leans and its rectangle is 7-9x its ink - about half the rain
+    passes on every style.
+    """
+    try:
+        img = np.array(Image.open(path).convert("RGB")).astype(np.int32)
+    except Exception:
+        return []                    # still rain beats a box on a building
+    want = np.asarray(D.rgb(bg), dtype=np.int32)
+    h, w = img.shape[:2]
+    out = []
+    for i, st in enumerate(streaks):
+        x0, y0, x1, y1 = _rain_box(st, k, lw)
+        if x0 < 0 or y0 < 0 or x1 > w or y1 > h:
+            continue
+        if int(np.abs(img[y0:y1, x0:x1] - want).sum(axis=2).max()) <= STAR_CLEAR:
+            out.append(i)
+    return out
+
+
+def rain_layers(cfg, W, H, dur, base=None):
+    """drawbox filters that take a streak away for part of its cycle.
+
+    The rain is baked into both layers, exactly as a still draws it; each of
+    these paints one streak's rectangle in the sky colour while it is "off".
+    Same colour either side of the playhead - it is the sky - so one filter a
+    streak, as a star has. On or off only: see RAIN_SHIMMER_OFF's note.
+
+    Goes into the chain BEFORE the live clock, so the clock is drawn over any
+    box it shares a corner with and needs no exclusion of its own.
+    """
+    wx = cfg.get("_weather") or {}
+    rain = wx.get("rain")
+    if not rain or not dur or cfg.get("no_shimmer") or not base:
+        return ""
+    k = W / wx.get("dw", 1280.0)
+    lw = rain["width"] * k
+    bg = cfg.get("background") or INK
+    streaks = rain["streaks"]
+    idx = _visible_rain(streaks, base, k, lw, bg)
+    # the most opaque first: a faint streak blinking is a change nobody sees
+    idx.sort(key=lambda i: -streaks[i][4])
+    idx = idx[:scene_mod.RAIN_SHIMMER_N]
+    rain["shimmering_drawn"] = len(idx)              # what the sidecar reports
+    col = "0x%02X%02X%02X" % D.rgb(bg)
+    out = []
+    for i in idx:
+        x0, y0, x1, y1 = _rain_box(streaks[i], k, lw)
+        p, ph = rain["timing"][i]
+        out.append(f"drawbox=x={x0}:y={y0}:w={x1 - x0}:h={y1 - y0}"
+                   f":color={col}:t=fill"
+                   f":enable='lt(mod(t+{ph:.3f}\\,{p:.3f})"
+                   f"\\,{p * scene_mod.RAIN_SHIMMER_OFF:.3f})'")
+    return "," + ",".join(out) if out else ""
+
+
 def epoch_for(datestr, timestr):
     dt = datetime.datetime.strptime(f"{datestr} {timestr}", "%Y-%m-%d %I:%M %p")
     return calendar.timegm(dt.timetuple())
@@ -1343,12 +1421,13 @@ def build_video(cfg, paths, audio, dur, W, H, out, fps=10, crf=None,
                  f":text='%{{pts\\:gmtime\\:{ep}\\:%I\\\\\\:%M %p}}'")
     else:
         clock = "null"               # the chain below still needs a head
+    rain = rain_layers(cfg, W, H, dur, base=paths.get("rainprobe"))
     fc = (
         f"color=c=black:s={W}x{H}:r={fps}[b1];"
         f"[b1][3:v]overlay=x='{W}*t/{D}-{W}':y=0,format=gray[m1];"
         f"[1:v][m1]alphamerge[clayA];"
         f"[0:v][clayA]overlay=0:0[s1];"
-        f"[s1]{clock}"
+        + (f"[s1]{rain[1:]},{clock}" if rain else f"[s1]{clock}")
         + blink_layers(cfg, W, H, dur)
         + star_layers(cfg, W, H, dur, base=paths.get("probe")) + "[v]"
     )
@@ -1660,6 +1739,7 @@ def _video_check(cfg):
             ("no_align", "--no-align", "nothing here is aligned to loudness"),
             ("no_blink", "--no-blink", "there are no beacons to blink"),
             ("no_twinkle", "--no-twinkle", "there is no star field to hold"),
+            ("no_shimmer", "--no-shimmer", "there is no rain to hold"),
             ("cover", "--cover", "this mode writes one video and no stills"),
             ("variants", "--variants",
              "the palette only reaches the slate, so every variant would "
@@ -2484,6 +2564,11 @@ def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None, cover=None,
             "cloud_count": len((cfg.get("_weather") or {}).get("clouds") or []),
             "rain_streaks": len(((cfg.get("_weather") or {}).get("rain")
                                  or {}).get("streaks") or []),
+            # ...and how many of those shimmer in the video: the ones on bare
+            # sky, capped. 0 for a still-only render, where nothing is built
+            "rain_shimmer": not cfg.get("no_shimmer", False),
+            "rain_shimmering_drawn": ((cfg.get("_weather") or {}).get("rain")
+                                      or {}).get("shimmering_drawn", 0),
             "weather_seed": (f"{cfg['_weather']['seed']:016x}"
                              if cfg.get("_weather") else ""),
             "stars": bool(cfg.get("stars")),
@@ -2933,6 +3018,10 @@ def run(cfg, progress=lambda s: None, on_progress=None):
     vid = build_video(cfg, paths, cfg["audio"], dur, W, H,
                       os.path.join(outdir, f"{slug}.mp4"),
                       fps=cfg.get("fps", 10), on_progress=stage(0.18, 1.0))
+    rn = (cfg.get("_weather") or {}).get("rain") or {}
+    if rn.get("shimmering_drawn"):
+        progress(f"  rain: {rn['shimmering_drawn']} of {len(rn['streaks'])} "
+                 "streaks shimmer - the rest are over the scene and hold still")
 
     json.dump(_sidecar(cfg, lv, dur, scale, dyn, n, None, cover,
                        vertical=vert),
@@ -3051,6 +3140,11 @@ def main():
                         "out and return (stars only). Video only, and it "
                         "only removes motion - a thumbnail is always a still, "
                         "and the field is the same either way")
+    g.add_argument("--no-shimmer", action="store_true",
+                   help="hold the rain steady instead of letting streaks "
+                        "blink out and back (--weather rain only). Video "
+                        "only, like --no-twinkle: the rain in every still is "
+                        "the same either way")
     g.add_argument("--filled", action="store_true",
                    help="solid silhouette instead of outlines")
     g.add_argument("--slate-mono", action="store_true",
@@ -3257,6 +3351,9 @@ def main():
         if n.slate_position != SLATE_POSITIONS[0]:
             a.error("--slate-position is --video only for now: photo mode "
                     "always draws its slate at the top.")
+        if n.no_shimmer:
+            a.error("--no-shimmer has no meaning with --photos: there is no "
+                    "generated rain to hold.")
         if n.vertical or n.badge:
             a.error(("--vertical" if n.vertical else "--badge")
                     + " has no meaning with --photos: a photograph is framed "

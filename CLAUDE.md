@@ -31,9 +31,10 @@ audio clip (or `--thumb-only` to skip the slow video encode) and inspect the out
 `tools/` holds the development scripts (not shipped by the updater, which only sends `lss_studio/`).
 When a change is meant to leave existing styles untouched, prove it rather than assert it:
 `py tools/identity_check.py baseline` on the old commit, `after` on the new one, then `compare` —
-292 cases: 180 style/palette/star/playback-state thumbnails, 7 generated videos, 10 photo-mode
+294 cases: 180 style/palette/star/playback-state thumbnails, 7 generated videos, 10 photo-mode
 keys, 6 clip-mode ones and 10 looped ones, then (added ahead of the vertical frame) 56 weather
-thumbnails, 7 generated covers with their thumbnails, 7 bare slates and 2 weather videos — every
+thumbnails, 7 generated covers with their thumbnails, 7 bare slates and 2 weather videos (the rain
+one held still with `--no-shimmer`), and 2 shimmering-rain videos — every
 video hashed on its DECODED frames rather than the container. The vertical frame itself is not in
 it: it is new output, not a style that must stay put.
 See `tools/README.md`.
@@ -89,6 +90,19 @@ self-explanatory on reading, bar the alpha rule under Conventions):
      Rain is deliberately kept out of the twinkle probe (`_clouds_only()`) — a
      cloud occludes a star, a streak does not, and `STAR_CLEAR = 0` would lose a
      twinkler to a single clipped corner.
+     In the video the rain SHIMMERS (`rain_layers()`, off with `--no-shimmer`):
+     the stars' bargain, not motion. Both layers bake the rain as the still
+     does, and a sky-coloured `drawbox` erases a streak for `RAIN_SHIMMER_OFF`
+     of its cycle — only where `_visible_rain()` finds its whole rectangle bare
+     sky in a third probe, `_rainprobe.png`, which keeps the stars and LIT
+     beacons so a box can land on neither. About half the rain qualifies, and
+     on/off is all it can do: a leaning streak's rectangle is 7-9x its ink, so
+     a partial tone would paint a grey box. The filters go into the chain
+     AHEAD of the live clock, so the clock needs no exclusion; the graph string
+     is unchanged whenever there are none. The timing is its own RNG stream
+     (`RAIN_SHIMMER_SALT`), drawn after clouds and streaks, so nothing already
+     in the weather moves. Measured +0-2% encode time, +2-5% file; falling rain
+     was 1.2x the runtime and was reverted — see `tools/rain_shimmer.py`.
   5b. A `variants` list in cfg (from `lss_presets.variants()`, thumbnail-only) makes `run()` emit
      one thumbnail per palette instead of one. It sits *after* the envelope, levels and geometry,
      so N looks cost one audio pass and one `compose()` each — and share a silhouette exactly.
@@ -222,7 +236,9 @@ self-explanatory on reading, bar the alpha rule under Conventions):
   `--vertical` is the "Shorts 9:16" tick beside the cover in the always-visible row, and
   `--badge` is on the Slate tab, typeable only while that tick is on (`_vertical_changed`).
   Both are among what `_photo_apply()` disables. That row sets the window's WIDTH: the tick
-  took it from 1046px to 1140px, which is why its label is short.
+  took it from 1046px to 1140px, which is why its label is short. "Let the rain shimmer"
+  (`--no-shimmer`) sits under Weather on the Look tab, greyed unless the weather is rain
+  (`_weather_changed`); Look is the tallest tab, so it took the window from 866px to 882px.
 
 - **`lss_photo.py`** — photo-background mode: a supplied set of stills cycling on a fixed interval
   in place of the generated skyline. It is a **mode, not a style**, and the reason is the style

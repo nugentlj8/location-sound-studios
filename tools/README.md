@@ -57,6 +57,18 @@ both states, on Night and on Mist (the palette that inverts the cloud tone),
 at both ends of the playhead; the bare slate has no clock and no number, the
 one way the city ceiling gets both right-hand columns back.
 
+Rain shimmer (1.15.0) changes every rain video on purpose, so the one rain
+video case that was baselined before it existed runs with `--no-shimmer`: it
+is the proof that the old video is still there, byte for byte. Shimmer itself
+is two new cases, on Night and on Mist (the palette whose sky the erasing box
+is painted in is the pale one).
+
+`rain_shimmer.py` and `rain_scenery.py` are the experiments shimmer was chosen
+from. The first renders the sky-only settings side by side (static, slow and
+fast blinks, a glint, a draining streak) and benches them; the second tries
+shimmering the streaks over the scenery with rain-free patches, the beacons'
+two-state trick, and benches that.
+
 Stash only `lss_studio/` when taking the baseline, or the harness reverts along
 with the code it is measuring:
 

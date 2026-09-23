@@ -245,6 +245,15 @@ class App:
                              "the palette.",
                   foreground=MUTED).grid(row=lr, column=1, sticky="w", pady=(0, 6))
         lr += 1
+        # the rain's --no-twinkle: only rain has streaks to shimmer, so the
+        # box follows the weather choice rather than being ticked and ignored
+        self.shimmer = tk.BooleanVar(value=True)
+        self.shimmerbox = ttk.Checkbutton(
+            look, text="Let the rain shimmer — video only, a thumbnail is "
+                       "always a still", variable=self.shimmer)
+        self.shimmerbox.grid(row=lr, column=1, sticky="w", pady=(0, 4))
+        self.weather.bind("<<ComboboxSelected>>", self._weather_changed)
+        lr += 1
         # On by default, and remembered separately from the box: a silhouette
         # that defines its own fill clears the box, and switching back to one
         # that does not has to put the choice back rather than silently
@@ -457,6 +466,7 @@ class App:
         f.rowconfigure(r, weight=1)
         self._thumbonly_changed()
         self._vertical_changed()
+        self._weather_changed()
         self.say("Choose an audio file and fill in the slate, then press Render.")
         self.root.after(120, self.drain)
         self.root.after(400, self._check_updates)
@@ -516,6 +526,12 @@ class App:
             if on else "Tick Thumbnail only to render several colours at once.")
         self._photo_apply()
 
+    def _weather_changed(self, _evt=None):
+        """Shimmer is rain's, so it is offered only when the weather is rain."""
+        self.shimmerbox.config(
+            state="normal" if self.weather.get() == "rain" else "disabled")
+        self._photo_apply()
+
     def _vertical_changed(self):
         """The badge is drawn on the vertical frame only, so it is typed only
         when that frame is being made."""
@@ -571,6 +587,7 @@ class App:
         for w in (self.blinkbox, self.starsbox, self.twinklebox, self.filledbox):
             w.config(state="disabled")
         self.variants.config(state="disabled")
+        self.shimmerbox.config(state="disabled")
         # a photo is framed 16:9 - there is no geometry for a tall frame
         self.verticalbox.config(state="disabled")
         self.badge.config(state="disabled")
@@ -598,6 +615,7 @@ class App:
             self._colors_changed()
             self._thumbonly_changed()
             self._vertical_changed()
+            self._weather_changed()
 
     def _picked_variants(self):
         """Selected colour presets, but only when they can actually be used -
@@ -986,6 +1004,7 @@ class App:
             "weather": self.weather.get(),
             "stars": bool(self.stars.get()),
             "no_twinkle": not bool(self.twinkle.get()),
+            "no_shimmer": not bool(self.shimmer.get()),
             "progress": frac,
             "cycle": cyc, "cycle_minutes": cmin,
             "towers": self.towers.get(), "dynamics": self.dyn.get(),

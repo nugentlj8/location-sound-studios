@@ -541,6 +541,32 @@ RAIN_N = 620                     # streaks at Default detail over the 16:9
                                  # cover has 1.8x the frame to fill and gets
                                  # 1.8x the streaks, at the same size
 
+# --- rain shimmer, in the video --------------------------------------------
+# Static rain reads as rain that ought to be falling and is not. Falling rain
+# was built and measured - 1.2x the video's runtime to render, all of it in
+# full-frame overlays - and reverted. This is the stars' bargain instead: the
+# streaks stay baked into both layers exactly as the still draws them, and a
+# sky-coloured drawbox takes one away for part of its cycle. Measured at
+# 2560x1440 against static rain, interleaved: 1.00-1.02x the encode time over
+# 120s, 1.05x the file. tools/rain_shimmer.py holds the clips and the bench.
+#
+# Only a streak whose whole rectangle is bare sky can do it - a drawbox cannot
+# tell what is under it - and on or off is all it can be: a streak leans, so
+# its rectangle is 7-9x its ink, and a partial tone would paint that rectangle
+# grey rather than dim the line. About half the rain qualifies on every style.
+RAIN_SHIMMER_SALT = 0x5A1E       # ...xored into the WEATHER seed, so the
+                                 # timing is its own stream and cannot move a
+                                 # cloud or a streak
+RAIN_SHIMMER_N = 140             # streaks given a filter, most opaque first -
+                                 # a faint streak blinking is a change nobody
+                                 # sees. The stars take up to 96 filters and
+                                 # the cost is linear to ~240 then sharply
+                                 # worse, so this is the room there is
+RAIN_SHIMMER_PERIOD = (2.5, 5.0) # seconds, per streak. Picked by eye from the
+                                 # clips: 0.8-1.6s read as flicker, and glint
+                                 # (mostly gone, briefly back) as sparse rain
+RAIN_SHIMMER_OFF = 0.35          # fraction of its period a streak is gone
+
 
 # --- how high the silhouette may rise, per column --------------------------
 # A single ceiling makes every column pay the WORST column's price, and the
@@ -1676,12 +1702,25 @@ def weather(db, state="clouds", detail="Default", horizon_y=None, dh=DH,
     rng = np.random.default_rng(seed)
     L = vlayout(dh, dw, lift)
     bot = L.ground if horizon_y is None else horizon_y
+    # clouds FIRST: they and the rain share one stream, and this is the order
+    # the two have always been drawn from it
+    clouds = _clouds(rng, CLOUD_TOP, bot, dw)
+    rain = _rain(rng, f, L.ground, dw) if state == "rain" else None
+    if rain:
+        # a (period, phase) for every streak, whether or not the video ends
+        # up giving it a filter - which ones do depends on the frame it is
+        # drawn into, and the draw must not depend on that order
+        t = np.random.default_rng(seed ^ RAIN_SHIMMER_SALT)
+        rain["timing"] = []
+        for _ in rain["streaks"]:
+            p = float(t.uniform(*RAIN_SHIMMER_PERIOD))
+            rain["timing"].append((p, float(t.uniform(0.0, p))))
     return {"seed": seed, "state": state, "dh": dh, "dw": dw,
             "band": (CLOUD_TOP, bot),
-            "clouds": _clouds(rng, CLOUD_TOP, bot, dw),
+            "clouds": clouds,
             # rain is drawn IN FRONT of the silhouette, so it runs the whole
             # frame down to the ground line rather than stopping at the band
-            "rain": _rain(rng, f, L.ground, dw) if state == "rain" else None}
+            "rain": rain}
 
 
 def sky(db, detail="Default", boxes=None, twinkle=True, dh=DH, dw=DW,

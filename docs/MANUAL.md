@@ -502,6 +502,34 @@ py lss_studio\lss_render.py recording.flac --stars --no-twinkle ...
 > and a `drawbox` costs about 91 of those. Seven beacons never came close; a sky's worth of twinklers
 > runs to ten thousand. What it encodes is byte-identical, verified by SHA against the inline form.
 
+## Weather
+
+**Weather** on the Look tab (`--weather`) adds `clouds` in whatever sky the silhouette leaves free,
+or `rain`, which is clouds plus streaks drawn in front of the scene and behind the text. Neither
+is tuned per style or per palette: both take their tones from the palette's own sky and skyline,
+so a cloud is always softer than the skyline it sits behind.
+
+### The rain shimmers in the video
+
+Rain that never moves reads as rain that should be falling and isn't. Rain that actually falls
+was built and measured — it costs about 1.2× the video's own length to render, so a 10-hour sleep
+video would take 12 hours — and was left out. In its place, the rain **shimmers**: in the video,
+streaks blink out and come back, each on its own slow 2.5–5 second cycle, gone for about a third of
+it. It reads as rain catching the light on purpose, and it costs about 1% of the render time.
+
+Only streaks on **open sky** shimmer, about half of them. The ones in front of buildings, mountains,
+trees, clouds and the text hold still. The shimmer works by painting a sky-coloured box over a
+streak, and over anything but sky there is no single colour that would hide it.
+
+A thumbnail, a cover and a Shorts frame are stills, so they show every streak. Untick **Let the
+rain shimmer** (or pass `--no-shimmer`) to hold the rain still in the video too — the video is then
+exactly what it was before shimmer existed.
+
+```
+py lss_studio\lss_render.py recording.flac --weather rain ...
+py lss_studio\lss_render.py recording.flac --weather rain --no-shimmer ...
+```
+
 ## Colours
 
 Pick a **Colours** preset to set the time of day. Each one sets the sky, the silhouette, and the

@@ -172,8 +172,19 @@ COVER_STYLES = WEATHER_STYLES
 BARE_SLATE = {"start": "", "number": ""}
 # One video with rain: the twinkle probe runs on _clouds_only() and the rain
 # is baked into both playback layers - neither is reached by a still.
-VIDEO_WEATHER_CASES = [("town", "city", {"filled": True, "weather": "rain"}),
+#
+# The rain case holds its rain STILL. Shimmer (1.15.0) changes a rain video on
+# purpose, and --no-shimmer is the promise that the old one is still there -
+# this key was baselined before shimmer existed, so it is what keeps that
+# promise checked. Shimmer itself is the new case below.
+VIDEO_WEATHER_CASES = [("town", "city", {"filled": True, "weather": "rain",
+                                         "no_shimmer": True}),
                        ("nature", "mountains_forest", {"weather": "clouds"})]
+# Rain that shimmers, the default since 1.15.0: the rain probe, the sky-only
+# test and the drawboxes ahead of the clock. Mist as well as Night, because
+# the box is painted in the sky colour and Mist's is the pale one.
+VIDEO_SHIMMER_CASES = [("town", "city", "Night", {"filled": True}),
+                       ("nature", "mountains_forest", "Mist", {})]
 
 SERIES_FOR = {"nature": "Sounds of Nature", "town": "Sounds of the City"}
 
@@ -233,6 +244,14 @@ def render_weather_cases(out, presets):
     for scene, style, extra in VIDEO_WEATHER_CASES:
         key = f"VIDEOWX_{scene}_{style}"
         cfg = gen_cfg(scene, style, "Night", presets, key, **extra)
+        cfg.update({"thumb_only": False, "width": 1280, "height": 720,
+                    "fps": 10, "audio": VIDEO_AUDIO})
+        r = R.run(cfg, progress=lambda s: None)
+        out[key] = sha_frames(r["video"])
+        print(f"  {key}  {out[key][:16]}")
+    for scene, style, pal, extra in VIDEO_SHIMMER_CASES:
+        key = f"VIDEOSHIMMER_{scene}_{style}_{pal}"
+        cfg = gen_cfg(scene, style, pal, presets, key, weather="rain", **extra)
         cfg.update({"thumb_only": False, "width": 1280, "height": 720,
                     "fps": 10, "audio": VIDEO_AUDIO})
         r = R.run(cfg, progress=lambda s: None)
