@@ -48,6 +48,15 @@ baseline does not have counts as new coverage, not a regression; a case the
 baseline HAS and the new run does not is still a failure, because that is
 coverage going quietly missing.
 
+The weather, cover and bare-slate cases were added ahead of the vertical
+frame, which threads a design width through every scene builder and every
+draw that computes k. Until then nothing here turned weather on or wrote the
+generated cover, so clouds, rain and the square frame were exactly the paths
+that change could have moved unseen. Weather runs every silhouette style in
+both states, on Night and on Mist (the palette that inverts the cloud tone),
+at both ends of the playhead; the bare slate has no clock and no number, the
+one way the city ceiling gets both right-hand columns back.
+
 Stash only `lss_studio/` when taking the baseline, or the harness reverts along
 with the code it is measuring:
 

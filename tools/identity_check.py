@@ -142,7 +142,102 @@ VIDEO_LOOP_CASES = [
                 "slate_position": "bottom", "scrim": 0.65}),
 ]
 
+# ---- weather, the generated cover and a bare slate -------------------------
+# Added in 1.14.0 ahead of the vertical layout, which threads a design WIDTH
+# through every scene builder and every draw that computes k. The 213 cases
+# above never turn weather on and never write the generated cover, so the
+# clouds, the rain and the square frame were the three paths that change could
+# move without anything here noticing. NEW cases, touching none of the 213.
+#
+# Every style, both weather states. Night and Mist because weather_tones()
+# derives its direction from the palette and Mist is the one that inverts it;
+# stars on, because the probe that keeps a twinkler out from under a cloud is
+# only exercised with both layers present. Both ends of the playhead, because
+# rain is tinted over whichever layer is under it.
+WEATHER_STYLES = [("nature", "topo", {}),
+                  ("nature", "mountains", {"mountain_face": "twotone"}),
+                  ("nature", "forest", {"tree_ahead": "faint"}),
+                  ("nature", "mountains_forest", {}),
+                  ("town", "blocks", {"filled": True}),
+                  ("town", "houses", {"filled": True}),
+                  ("town", "city", {"filled": True})]
+WEATHER_STATES = ["clouds", "rain"]
+WEATHER_PALETTES = ["Night", "Mist"]
+# The generated square cover, per style, with rain and stars on - the one
+# output built at a second design height, so the one that tests vlayout()
+# as something other than the identity.
+COVER_STYLES = WEATHER_STYLES
+# A slate with no clock and no number: slate_boxes() hands both columns back
+# to the city ceiling then, and that branch is otherwise never taken.
+BARE_SLATE = {"start": "", "number": ""}
+# One video with rain: the twinkle probe runs on _clouds_only() and the rain
+# is baked into both playback layers - neither is reached by a still.
+VIDEO_WEATHER_CASES = [("town", "city", {"filled": True, "weather": "rain"}),
+                       ("nature", "mountains_forest", {"weather": "clouds"})]
+
 SERIES_FOR = {"nature": "Sounds of Nature", "town": "Sounds of the City"}
+
+
+def gen_cfg(scene, style, pal, presets, key, **over):
+    """The shared half of a generated-scene case, as the 180 above build it."""
+    series = SERIES_FOR[scene]
+    name, base = P.resolve(series, "None (use series colour)", presets, None)
+    bg, fg, acc = P.resolve_colors(pal, "None (use series colour)",
+                                   presets, base, None)
+    cfg = {
+        "series": name, "place": "SOUTH MOUNTAIN PARK",
+        "city": "PHOENIX", "conditions": "CLEAR 78F",
+        "date": "2026-08-11", "start": "06:30 PM",
+        "number": "7", "number_style": "No.",
+        "background": bg, "foreground": fg, "accent": acc,
+        "geometry": P.series_geometry(series, presets),
+        "scene": scene, "style": style,
+        "detail": "Default", "towers": "Default",
+        "scale": "Skyline (rank)", "dynamics": "More",
+        "height_stat": "peak", "align_loud": True,
+        "rows": 1, "filled": False, "progress": 1.0,
+        "thumb_only": True, "thumb_width": 1920,
+        "stars": True, "color_preset": pal,
+        "audio": AUDIO, "outdir": OUT, "outname": key,
+    }
+    cfg.update(over)
+    return cfg
+
+
+def render_weather_cases(out, presets):
+    """Weather, the generated cover, a bare slate. Adds keys; touches none of
+    the 213 above."""
+    for scene, style, extra in WEATHER_STYLES:
+        for state in WEATHER_STATES:
+            for pal in WEATHER_PALETTES:
+                for prog in PROGRESS:
+                    key = f"WEATHER_{state}_{scene}_{style}_{pal}_p{int(prog)}"
+                    r = R.run(gen_cfg(scene, style, pal, presets, key,
+                                      weather=state, progress=prog, **extra),
+                              progress=lambda s: None)
+                    out[key] = sha(r["thumbnail"])
+                    print(f"  {key}  {out[key][:16]}")
+    for scene, style, extra in COVER_STYLES:
+        key = f"COVER_{scene}_{style}"
+        r = R.run(gen_cfg(scene, style, "Night", presets, key, cover=True,
+                          weather="rain", **extra), progress=lambda s: None)
+        out[key] = sha(r["thumbnail"])
+        out[key + "_png"] = sha(r["cover"])
+        print(f"  {key}  {out[key][:16]}  cover {out[key + '_png'][:16]}")
+    for scene, style, extra in WEATHER_STYLES:
+        key = f"BARE_{scene}_{style}"
+        r = R.run(gen_cfg(scene, style, "Night", presets, key,
+                          **dict(BARE_SLATE, **extra)), progress=lambda s: None)
+        out[key] = sha(r["thumbnail"])
+        print(f"  {key}  {out[key][:16]}")
+    for scene, style, extra in VIDEO_WEATHER_CASES:
+        key = f"VIDEOWX_{scene}_{style}"
+        cfg = gen_cfg(scene, style, "Night", presets, key, **extra)
+        cfg.update({"thumb_only": False, "width": 1280, "height": 720,
+                    "fps": 10, "audio": VIDEO_AUDIO})
+        r = R.run(cfg, progress=lambda s: None)
+        out[key] = sha_frames(r["video"])
+        print(f"  {key}  {out[key][:16]}")
 
 
 def make_audio():
@@ -431,6 +526,9 @@ def render_all(tag):
 
     # ---- looping one clip to fill an audio track ----------------------
     render_loop_cases(out, presets)
+
+    # ---- weather, the generated cover, a bare slate -------------------
+    render_weather_cases(out, presets)
 
     path = os.path.join(RENDERS, f"identity_{tag}.json")
     json.dump(out, open(path, "w"), indent=2)

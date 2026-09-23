@@ -587,6 +587,15 @@ CEIL_RAMP = 46.0                 # how far the ceiling takes to climb out of a
 # additions of 0.0, both of which are identities for any finite float. A 16:9
 # render is therefore byte-identical by construction rather than by testing -
 # and tools/identity_check.py tests it anyway.
+#
+# The vertical Shorts frame added the other axis. It is 720 design units wide
+# rather than 1280, so that k at 1080px is 1.5 - the landscape thumbnail's own
+# k - and the split is the same one, turned sideways: the frame's EDGES move,
+# a tree does not. So everything counted "across the frame" is a DENSITY per
+# design unit of width - trees at a fixed spacing, houses and city blocks at a
+# fixed width, stars, clouds and rain per unit of area - and a narrower frame
+# holds fewer of them at the same size, never the same number shrunk. `wf` is
+# that ratio, and it is exactly 1.0 whenever dw is DW - the cover included.
 class VLayout(NamedTuple):
     dh: float                    # design height for this aspect ratio
     dy: float                    # how far the slate rides down from 16:9
@@ -599,15 +608,22 @@ class VLayout(NamedTuple):
     mtn_top_max: float
     city_max_h: float
     ceil_free: float
+    dw: float = DW               # design width
+    wf: float = 1.0              # dw / DW, the across-the-frame density scale
 
 
-def vlayout(dh=DH):
-    """The vertical layout for a frame `dh` design units tall."""
+def vlayout(dh=DH, dw=DW, lift=0.0):
+    """The layout for a frame `dw` x `dh` design units.
+
+    `lift` raises the ground off the bottom edge - the vertical frame's
+    ground_lift. The whole silhouette rides up with it, as it rides down on a
+    taller frame; 0.0 is an addition of zero.
+    """
     s = dh / DH                              # exactly 1.0 at 16:9
-    grow = dh - DH                           # exactly 0.0 at 16:9
+    grow = dh - DH - lift                    # exactly 0.0 at 16:9
     ground = GROUND + grow                   # the ground rides the bottom edge
     return VLayout(
-        dh=dh, dy=dh / 2.0 - 360.0,
+        dh=dh, dy=dh / 2.0 - 360.0, dw=dw, wf=dw / DW,
         ground=ground, town_base=TOWN_BASE + grow,
         mtn_base=ground, fore_base=ground, star_base=ground,
         # a summit and a tower keep the FRACTION of the frame they always had,
@@ -624,7 +640,8 @@ def vlayout(dh=DH):
 DESIGN = vlayout()               # the 16:9 layout: every constant above, as-is
 
 
-def ceiling_profile(boxes, free_y=CEIL_FREE, clear=CEIL_CLEAR, ramp=CEIL_RAMP):
+def ceiling_profile(boxes, free_y=CEIL_FREE, clear=CEIL_CLEAR, ramp=CEIL_RAMP,
+                    dw=DW):
     """The highest a silhouette may rise at each x, from measured text extents.
 
     `boxes` is (x0, x1, ink_bottom) per run of slate text, in design units.
@@ -632,7 +649,7 @@ def ceiling_profile(boxes, free_y=CEIL_FREE, clear=CEIL_CLEAR, ramp=CEIL_RAMP):
     profile again - the smoothing is only ever allowed to push the ceiling DOWN
     toward the text, never up into it.
     """
-    xs = np.arange(-60.0, DW + 60.0 + CEIL_SAMPLE, CEIL_SAMPLE)
+    xs = np.arange(-60.0, dw + 60.0 + CEIL_SAMPLE, CEIL_SAMPLE)
     hard = np.full(len(xs), float(free_y))
     for x0, x1, base in boxes:
         m = (xs >= x0 - clear) & (xs <= x1 + clear)
@@ -847,14 +864,15 @@ def _mountains(db, detail, scale, dynamics, rng, L=DESIGN):
     n = max(48, int(round(160 * detail)))
     prof = smooth(bin_peak(db, n), n / 22.0, passes=2)
     # Few and large. A steep flank needs roughly its own height in width, so
-    # more than about five summits across 1280 units can only be short ones.
-    lo = max(3, int(round(3 * detail)))
-    hi = max(lo, int(round(5 * detail)))
+    # more than about five summits across 1280 units can only be short ones -
+    # and proportionally fewer across a narrower frame, floored at three.
+    lo = max(3, int(round(3 * detail * L.wf)))
+    hi = max(lo, int(round(5 * detail * L.wf)))
     idx = pick_peaks(prof, max(2, int(round(n / 9.0))), lo, hi)
     if not idx:
         return []
     hgt = map_db(prof[idx], scale, dynamics)
-    span = DW + 120.0
+    span = L.dw + 120.0
 
     def X(i):
         return -60.0 + (i + 0.5) * span / n
@@ -869,7 +887,7 @@ def _mountains(db, detail, scale, dynamics, rng, L=DESIGN):
     # These are a framing device, not a data channel: only an inner flank shows.
     peaks.insert(0, {"x": -190.0,
                      "y": summit(float(hgt[0]) * rng.uniform(0.55, 0.80))})
-    peaks.append({"x": DW + 190.0,
+    peaks.append({"x": L.dw + 190.0,
                   "y": summit(float(hgt[-1]) * rng.uniform(0.55, 0.80))})
 
     out = []
@@ -965,7 +983,7 @@ def _trees(db, detail, scale, dynamics, rng, vary, L=DESIGN):
     # module constant of the same name, so nothing below can tell.
     GROUND = L.ground
     spacing = TREE_SPACING / detail
-    n = max(6, int(round((DW + 120.0) / spacing)))
+    n = max(6, int(round((L.dw + 120.0) / spacing)))
     lvl = None
     if vary:
         lvl = map_db(smooth(bin_peak(db, n), max(1.0, n / 30.0), passes=1),
@@ -1139,7 +1157,9 @@ def _houses(lv, detail, rng, L=DESIGN):
     # module constant of the same name, so nothing below can tell.
     TOWN_BASE = L.town_base
     lv = np.asarray(lv, dtype=np.float64)
-    n = max(8, int(round(HOUSE_N * detail)))
+    # HOUSE_N is houses across the 16:9 row, so a narrower frame gets the same
+    # house WIDTH and fewer of them. (dw+60)/(DW+60) is exactly 1.0 at 16:9.
+    n = max(8, int(round(HOUSE_N * detail * ((L.dw + 60.0) / (DW + 60.0)))))
     # Regroup the block levels onto the coarser house grid, keeping each
     # group's LOUDEST block - so the onset alignment already baked into lv
     # survives the change of resolution and a siren still lands on the house
@@ -1149,7 +1169,7 @@ def _houses(lv, detail, rng, L=DESIGN):
     else:
         e = np.linspace(0, len(lv), n + 1).astype(int)
         hl = np.array([lv[e[i]:max(e[i] + 1, e[i + 1])].max() for i in range(n)])
-    w = (DW + 60.0) / n
+    w = (L.dw + 60.0) / n
     cut = float(np.percentile(hl, HOUSE_TOWER_PCT))
     amp = 0.218 * DH * HOUSE_TOWER_AMP
     y0 = TOWN_BASE - amp * 0.45
@@ -1265,7 +1285,7 @@ def _city(lv, detail, rng, ceiling=None, L=DESIGN):
         # the same move _houses makes, and for the same reason: the onset
         # alignment already baked into lv survives the change of resolution, so
         # a siren still lands on the building that was playing when it happened.
-        n = max(8, int(round((DW + 60.0) / CITY_BLOCK_W)))
+        n = max(8, int(round((L.dw + 60.0) / CITY_BLOCK_W)))
         if len(lv) > n:
             e = np.linspace(0, len(lv), n + 1).astype(int)
             lv = np.array([lv[e[i]:max(e[i] + 1, e[i + 1])].max()
@@ -1274,7 +1294,7 @@ def _city(lv, detail, rng, ceiling=None, L=DESIGN):
             lv = np.interp(np.linspace(0, len(lv) - 1, n),
                            np.arange(len(lv)), lv)
     n = len(lv)
-    w = (DW + 60.0) / n
+    w = (L.dw + 60.0) / n
     t = np.clip((lv + 0.45) / 1.40, 0.0, 1.0)        # level to 0..1
     out = []
     for i, v in enumerate(t):
@@ -1339,7 +1359,7 @@ def _city(lv, detail, rng, ceiling=None, L=DESIGN):
         # the row runs off both edges by design, so the outermost buildings are
         # only part on screen. A mast out there is invisible, and would still
         # cost the video a pair of blink filters aimed off the frame.
-        on_frame = MAST_W <= h["cx"] <= DW - MAST_W
+        on_frame = MAST_W <= h["cx"] <= L.dw - MAST_W
         if h["t"] < ANT_MIN_T or not on_frame:
             rng.random()                             # keep the stream aligned
             continue
@@ -1390,7 +1410,7 @@ def _fore(detail, rng, L=DESIGN):
     # than shrinking them, the same way more houses are narrower houses.
     span = []
     x = -60.0
-    while x < DW + 40.0:
+    while x < L.dw + 40.0:
         w = rng.uniform(*FORE_W) / detail
         span.append((x, x + w))
         x += w * rng.uniform(*FORE_STEP)
@@ -1453,9 +1473,9 @@ def _stars(rng, n, twinkle=True, L=DESIGN):
     # the frame this build is drawing into. At 16:9 every field IS the
     # module constant of the same name, so nothing below can tell.
     h = L.star_base - STAR_TOP
-    cell = math.sqrt(DW * h / max(1, n))
-    cols, rows_ = max(1, int(round(DW / cell))), max(1, int(round(h / cell)))
-    cw, ch = DW / cols, h / rows_
+    cell = math.sqrt(L.dw * h / max(1, n))
+    cols, rows_ = max(1, int(round(L.dw / cell))), max(1, int(round(h / cell)))
+    cw, ch = L.dw / cols, h / rows_
     out = []
     for r in range(rows_):
         for c in range(cols):
@@ -1501,7 +1521,7 @@ def _stars(rng, n, twinkle=True, L=DESIGN):
     return out
 
 
-def _body_span(boxes):
+def _body_span(boxes, dw=DW):
     """The empty run between the series name and the episode number.
 
     Nothing draws with this yet. It is measured here because that span is where
@@ -1520,7 +1540,7 @@ def _body_span(boxes):
     if not top:
         return None
     left = top[0][1]
-    return (left, top[1][0] if len(top) > 1 else DW)
+    return (left, top[1][0] if len(top) > 1 else dw)
 
 
 def horizon(sc):
@@ -1582,7 +1602,7 @@ def _cloud(rng, cx, cy, h):
             "under_dy": h * CLOUD_UNDER}
 
 
-def _clouds(rng, band_top, band_bot):
+def _clouds(rng, band_top, band_bot, dw=DW):
     """Clouds spread over the band the style actually leaves free.
 
     Size is a fraction of the band, so the city's 352 units of sky and the
@@ -1595,7 +1615,7 @@ def _clouds(rng, band_top, band_bot):
         return []
     hm = min(CLOUD_H_MAX, max(CLOUD_H_MIN, band * sum(CLOUD_H) / 2.0))
     wm = hm * sum(CLOUD_ASPECT) / 2.0
-    n = int(round(CLOUD_FILL * DW * band / max(1.0, wm * hm)))
+    n = int(round(CLOUD_FILL * dw * band / max(1.0, wm * hm)))
     n = max(CLOUD_MIN, min(CLOUD_MAX, n))
     out = []
     for i in range(n):
@@ -1603,13 +1623,13 @@ def _clouds(rng, band_top, band_bot):
         # an even run across the frame, then jittered - the star field's rule,
         # for the star field's reason: uniform random over a width clumps, and
         # three clouds in a huddle over one building is not weather
-        cx = (i + 0.5 + rng.uniform(-0.42, 0.42)) * DW / n
+        cx = (i + 0.5 + rng.uniform(-0.42, 0.42)) * dw / n
         cy = rng.uniform(band_top + h / 2.0, band_bot + CLOUD_SINK * h)
         out.append(_cloud(rng, cx, cy, h))
     return out
 
 
-def _rain(rng, f, ground):
+def _rain(rng, f, ground, dw=DW):
     """Static rain: short straight segments on one shared lean.
 
     No motion, no sparkle, drawn once and held for the whole video - so it
@@ -1621,11 +1641,12 @@ def _rain(rng, f, ground):
     if rng.random() < 0.5:
         lean = -lean
     sx, sy = math.sin(lean), math.cos(lean)
-    n = max(24, int(round(RAIN_N * f * (ground / GROUND))))
-    cell = math.sqrt(DW * ground / n)
-    cols = max(1, int(round(DW / cell)))
+    # a density over the frame's AREA: taller gets more, narrower gets fewer
+    n = max(24, int(round(RAIN_N * f * (ground / GROUND) * (dw / DW))))
+    cell = math.sqrt(dw * ground / n)
+    cols = max(1, int(round(dw / cell)))
     rows_ = max(1, int(round(ground / cell)))
-    cw, ch = DW / cols, ground / rows_
+    cw, ch = dw / cols, ground / rows_
     out = []
     for r in range(rows_):
         for c in range(cols):
@@ -1637,7 +1658,8 @@ def _rain(rng, f, ground):
     return {"lean": math.degrees(lean), "width": RAIN_W, "streaks": out}
 
 
-def weather(db, state="clouds", detail="Default", horizon_y=None, dh=DH):
+def weather(db, state="clouds", detail="Default", horizon_y=None, dh=DH,
+            dw=DW, lift=0.0):
     """The weather layer: clouds, and rain that does not move.
 
     Its own RNG stream, salted off the envelope seed, so a render with weather
@@ -1652,16 +1674,18 @@ def weather(db, state="clouds", detail="Default", horizon_y=None, dh=DH):
     f = resolve_detail(detail)
     seed = seed_from(db) ^ WEATHER_SALT
     rng = np.random.default_rng(seed)
-    L = vlayout(dh)
+    L = vlayout(dh, dw, lift)
     bot = L.ground if horizon_y is None else horizon_y
-    return {"seed": seed, "state": state, "dh": dh, "band": (CLOUD_TOP, bot),
-            "clouds": _clouds(rng, CLOUD_TOP, bot),
+    return {"seed": seed, "state": state, "dh": dh, "dw": dw,
+            "band": (CLOUD_TOP, bot),
+            "clouds": _clouds(rng, CLOUD_TOP, bot, dw),
             # rain is drawn IN FRONT of the silhouette, so it runs the whole
             # frame down to the ground line rather than stopping at the band
-            "rain": _rain(rng, f, L.ground) if state == "rain" else None}
+            "rain": _rain(rng, f, L.ground, dw) if state == "rain" else None}
 
 
-def sky(db, detail="Default", boxes=None, twinkle=True, dh=DH):
+def sky(db, detail="Default", boxes=None, twinkle=True, dh=DH, dw=DW,
+        lift=0.0):
     """The background layer: a star field now, a sun or moon later.
 
     Salted off the envelope seed onto its own RNG stream, so the silhouette is
@@ -1674,17 +1698,18 @@ def sky(db, detail="Default", boxes=None, twinkle=True, dh=DH):
     f = resolve_detail(detail)
     seed = seed_from(db) ^ STAR_SALT
     rng = np.random.default_rng(seed)
-    L = vlayout(dh)
+    L = vlayout(dh, dw, lift)
     # STAR_N is a DENSITY, not a count. The square cover's sky is 1.8x the
     # 16:9 band, and holding the count fixed there would draw the same stars
     # thinner - a cover that reads as a clearer night than its own thumbnail.
-    # Exactly 1.0 at 16:9: the same two numbers over each other.
-    spread = (L.star_base - STAR_TOP) / (STAR_BASE - STAR_TOP)
+    # Exactly 1.0 at 16:9: the same two numbers over each other. The width
+    # term is the same density across: exactly 1.0 unless the frame narrows.
+    spread = (L.star_base - STAR_TOP) / (STAR_BASE - STAR_TOP) * L.wf
     stars = _stars(rng, max(8, int(round(STAR_N * f * spread))), twinkle, L)
-    return {"seed": seed, "stars": stars,
+    return {"seed": seed, "stars": stars, "dw": dw,
             "twinklers": sum(1 for s in stars if s.get("twinkle")),
             # the slot the next pass fills, and the room it has to fill it in
-            "body": None, "body_span": _body_span(boxes)}
+            "body": None, "body_span": _body_span(boxes, dw)}
 
 
 # ----------------------------------------------------------------- entry
@@ -1721,7 +1746,7 @@ def check(scene, style, rows=1, filled=False, progress=0.0):
 
 
 def build(style, db, lv, detail="Default", scale="Skyline (rank)",
-          dynamics="More", ceiling=None, dh=DH):
+          dynamics="More", ceiling=None, dh=DH, dw=DW, lift=0.0):
     """All the geometry one render needs, in design units.
 
     `dh` is the frame's design height - 720 for the 16:9 thumbnail and video,
@@ -1730,12 +1755,16 @@ def build(style, db, lv, detail="Default", scale="Skyline (rank)",
     also why a cover has to be built separately rather than cropped from the
     16:9 geometry - the shapes are the same shapes, standing on a lower ground
     line with more room over their heads.
+
+    `dw` is the design width, 1280 for both of those and 720 for the vertical
+    Shorts frame, which holds fewer features across at the same size - see
+    VLayout. `lift` is that frame's ground_lift.
     """
-    L = vlayout(dh)
+    L = vlayout(dh, dw, lift)
     f = resolve_detail(detail)
     seed = seed_from(db)
     rng = np.random.default_rng(seed)
-    sc = {"style": style, "seed": seed, "detail": f, "dh": dh,
+    sc = {"style": style, "seed": seed, "detail": f, "dh": dh, "dw": dw,
           # the ground line the range stands on, so the draw can trim the flank
           # strokes to it without importing this module's layout constants
           "mtn_base": L.mtn_base,

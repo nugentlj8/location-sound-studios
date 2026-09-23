@@ -31,9 +31,11 @@ audio clip (or `--thumb-only` to skip the slow video encode) and inspect the out
 `tools/` holds the development scripts (not shipped by the updater, which only sends `lss_studio/`).
 When a change is meant to leave existing styles untouched, prove it rather than assert it:
 `py tools/identity_check.py baseline` on the old commit, `after` on the new one, then `compare` —
-213 cases: 180 style/palette/star/playback-state thumbnails, 7 generated videos, 10 photo-mode
-keys, 6 clip-mode ones and 10 looped ones, every video hashed on its DECODED frames rather than
-the container.
+292 cases: 180 style/palette/star/playback-state thumbnails, 7 generated videos, 10 photo-mode
+keys, 6 clip-mode ones and 10 looped ones, then (added ahead of the vertical frame) 56 weather
+thumbnails, 7 generated covers with their thumbnails, 7 bare slates and 2 weather videos — every
+video hashed on its DECODED frames rather than the container. The vertical frame itself is not in
+it: it is new output, not a style that must stay put.
 See `tools/README.md`.
 
 ## Architecture
@@ -157,6 +159,26 @@ self-explanatory on reading, bar the alpha rule under Conventions):
      because outdir is routinely a network drive and the scratch is several GB; and `+faststart` is
      deliberately off, being a full rewrite of a 20 GB file for a benefit an upload never collects.
      `_video_legibility(windows=...)` samples only the minutes that show the slate.
+  5i. `--vertical` adds a 1080x1920 still for YouTube Shorts beside the thumbnail, and it is a
+     LAYOUT, not a crop: `_vertical()` rebuilds the geometry off the same envelope seed, as
+     `_cover()` does, for a **720x1280** design frame. 720 rather than 1280 wide is the decision
+     everything else follows from: k at 1080px is then 1.5, the landscape thumbnail's own k, so
+     every tree, window, star and streak is the same pixel size in both, and a narrower frame holds
+     FEWER features across rather than the same number shrunk. So `vlayout()` carries a design
+     width too, every count "across the frame" is a density (tree spacing, house and block width,
+     stars, clouds and rain per unit area), and the building count is scaled by `dw/1280` before
+     `to_levels()`. `wf` is exactly 1.0 at dw == 1280, which is what keeps every landscape and
+     cover render byte-identical — and the draw functions take k from each geometry dict's own
+     `dw`. The text is a separate layout too: `column_layout()` stacks badge, series, title
+     (wrapped to two balanced lines, then shrunk), tagline and a number/clock footer into a
+     centred column, and it is the ONE place that positions it — `lss_draw.draw_column()` only
+     centres each line at its drawn size, and the city ceiling reads the same result, so there is
+     no mirror like `slate_boxes()` to keep in step. It runs in `run()` BEFORE the audio pass,
+     because a line that enters `safe_top`/`safe_bottom` is an error naming the preset key and
+     the line, and finding that after a three-hour envelope would be the wrong order. The safe
+     zones bind the TEXT only; the scenery runs to the bottom edge, less `ground_lift`. Still only:
+     a Short is at most 3 minutes, and choosing which minutes of a long recording is its own
+     feature. Refused with `--photos` and `--video`.
   6. `run()` is the orchestration entry point both the GUI and CLI call — writes the thumbnail, the
      video (unless `--thumb-only`), and a `<slug>_render.json` sidecar capturing every parameter used,
      so a past render can be understood or reproduced later. Output goes to a fresh
@@ -197,6 +219,10 @@ self-explanatory on reading, bar the alpha rule under Conventions):
   `--video` (5g) is deliberately **not** here: it is CLI-only for now, so the usual rule that a
   setting goes in the matching group on both sides does not yet apply to it. Adding it means a
   seventh tab and a fourth thing for `_photo_apply()`'s disable-only discipline to agree with.
+  `--vertical` is the "Shorts 9:16" tick beside the cover in the always-visible row, and
+  `--badge` is on the Slate tab, typeable only while that tick is on (`_vertical_changed`).
+  Both are among what `_photo_apply()` disables. That row sets the window's WIDTH: the tick
+  took it from 1046px to 1140px, which is why its label is short.
 
 - **`lss_photo.py`** — photo-background mode: a supplied set of stills cycling on a fixed interval
   in place of the generated skyline. It is a **mode, not a style**, and the reason is the style
@@ -218,7 +244,13 @@ Supporting pieces:
 - **`lss_presets.json`** — user-editable data, not code. Defines named "series" (each with a name,
   accent colour(s), and geometry) and "themes" (seasonal overlays: alternate colours, a name suffix,
   and optionally a colour `cycle` for the playback line). The updater (`lss_update.py`) explicitly
-  never overwrites this file, so users can safely add their own presets.
+  never overwrites this file, so users can safely add their own presets. Its `layouts` block is
+  the slate's positions and sizes — `landscape`, the numbers `draw_slate()` used to hold as
+  literals, and `vertical`, the Shorts frame and its safe zones. The same values ship in
+  `lss_presets.LAYOUTS`, because a user's copy of this file may predate the block; a layout in
+  the file overrides the shipped one field by field. `run()` settles them once, next to `FONT`,
+  into `lss_render.LAYOUTS`. Editing `landscape` moves every render, which is what it is for —
+  and why the identity check must be run against the shipped values, not a tuned file.
 - **`lss_update.py`** — self-update mechanism. On launch, the GUI checks the `VERSION` file at
   `raw.githubusercontent.com/<user>/<repo>/main/lss_studio/VERSION`; if newer, downloads the program
   files (everything in `FILES` — explicitly *not* `lss_presets.json`) to a temp dir, `py_compile`
@@ -262,6 +294,9 @@ and every running copy of the app picks it up on its next launch via `lss_update
   over a flat sky - separate channels 0.15 levels, one RGBA resize 3.3 to 4.6 with peaks past 250.
 - Design coordinates are fixed at a 1280x720 basis and scaled by `k = W / 1280.0` everywhere in
   `compose()` — when adjusting layout, change the design-unit constant, not per-resolution numbers.
+  The one other basis is the vertical frame's 720 units across (5i): there k is `W / dw`, read
+  off `cfg["_dw"]` in `compose()` and off each geometry dict's own `dw` in the draw functions, so
+  a new draw function takes k from its geometry, never from a literal 1280.
 - `usable()` in `lss_render.py` degrades a configured network drive path (`Z:\...`) to a folder in
   the user's home directory when that drive isn't mounted — this is how the tool stays usable off
   the studio's network.

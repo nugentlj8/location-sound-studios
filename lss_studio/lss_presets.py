@@ -101,6 +101,65 @@ COLOR_PRESETS = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Frame layouts: where the slate text sits, how big it is, and for the vertical
+# frame, how big the frame is and which bands of it the text must stay out of.
+# All positions and sizes are DESIGN units - multiplied by k at draw time, where
+# k is the output width over the layout's design width - so a layout describes
+# a shape, never a pixel count.
+#
+# Shipped in code for the reason the colour presets are: lss_presets.json is the
+# user's own file and the updater never overwrites it, so a copy from before
+# layouts existed has to keep rendering. A "layouts" key there overrides these
+# FIELD BY FIELD - one number can be tuned without restating the rest.
+#
+# "landscape" is the 16:9 slate every render has always drawn, as numbers: the
+# series and number share one baseline, the place (the title) sits under it,
+# and "CITY · CONDITIONS" (the tagline) shares its baseline with the clock.
+# These are the literals draw_slate held before 1.14.0, and changing one moves
+# every generated, photo and clip render - that is what it is for.
+#
+# "vertical" is the 9:16 Shorts frame, a different layout rather than the same
+# one moved: a centred column stacked from `top` down, each run's baseline one
+# gap plus its own size below the run above. `safe_top` and `safe_bottom` are
+# fractions of the frame height the TEXT may not enter - the scenery is allowed
+# under the Shorts UI and runs to the bottom edge, less `ground_lift`.
+LAYOUTS = {
+    "landscape": {
+        "margin": 84,
+        "series_size": 27, "series_tracking": 11, "series_baseline": 150,
+        "number_gap": 40,        # min space between the series and the number
+        "title_size": 104, "title_tracking": 7, "title_baseline": 296,
+        "tagline_size": 31, "tagline_tracking": 8, "tagline_baseline": 360,
+        "clock_size": 31,
+    },
+    "vertical": {
+        "width": 1080, "height": 1920,
+        # 720 design units across, so k is 1.5 at 1080px - the same k as the
+        # 1920px landscape thumbnail, and every tree, window, star and streak
+        # is the same pixel size in both. The design height follows from the
+        # aspect: 720 x 1920/1080 = 1280.
+        "design_width": 720,
+        "safe_top": 0.15, "safe_bottom": 0.20,
+        "ground_lift": 0,
+        "margin": 56,
+        "top": 200,              # the top edge of the text block
+        "badge_size": 24, "badge_tracking": 5,
+        "badge_pad_x": 14, "badge_pad_y": 9, "badge_gap": 30,
+        "series_size": 30, "series_tracking": 10, "series_gap": 34,
+        "title_size": 110, "title_tracking": 5,
+        "title_lines": 2, "title_line_gap": 10, "title_gap": 30,
+        "tagline_size": 34, "tagline_tracking": 7, "tagline_gap": 24,
+        "footer_size": 30, "footer_tracking": 6,
+    },
+}
+
+
+def layouts(p=None):
+    """Every layout, the shipped values overlaid with the presets file's."""
+    return (p or load())["layouts"]
+
+
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 # The colour slots a preset can fill, in the order they sit on screen - sky
@@ -130,6 +189,15 @@ def load():
     colors = dict(COLOR_PRESETS)
     colors.update(d.get("colors") or {})
     d["colors"] = colors
+    # ...and the layouts the same way, one level deeper: a layout in the file
+    # overrides the shipped one field by field rather than replacing it
+    over = d.get("layouts") if isinstance(d.get("layouts"), dict) else {}
+    lay = {}
+    for name, fields in LAYOUTS.items():
+        mine = over.get(name) if isinstance(over.get(name), dict) else {}
+        lay[name] = dict(fields, **{k: v for k, v in mine.items()
+                                    if not k.startswith("_")})
+    d["layouts"] = lay
     return d
 
 

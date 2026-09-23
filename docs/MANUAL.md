@@ -612,6 +612,66 @@ py lss_studio\lss_render.py --list-presets
 its accent. Give a background without a foreground and it derives a readable one for you, so a
 custom sky can never leave the skyline invisible.
 
+## Shorts (vertical)
+
+Tick **Shorts 9:16** (or pass `--vertical`) and the render also writes a 1080×1920 still,
+`<name>_vertical.png`, beside the thumbnail. It is not the landscape frame cropped or padded: the
+scene is rebuilt for the tall frame from the same recording, so it is the same skyline, mountains
+or treeline, standing on the bottom edge with a much taller sky over it.
+
+Everything in it is the **same pixel size** as in the 1920 landscape thumbnail — a window, a tree,
+a star, a raindrop. A narrower frame therefore holds *fewer* of them across rather than the same
+number squeezed in: about 22 city blocks where landscape has 40, each the same width. The loud
+moments still land on the tall buildings, because the whole recording still runs left to right.
+
+The text is restacked as a centred column in the upper middle of the frame:
+
+- the **badge**, if there is one — a small accent pill, e.g. `LIVE`. Off unless you type one
+  (`--badge LIVE`); the field is on the Slate tab and only takes text while Shorts is ticked
+- the **series**
+- the **place**, large, wrapping onto two balanced lines if it does not fit on one
+  (`DOWNTOWN / PHOENIX`), and shrinking only if a half still does not fit
+- **city · conditions**
+- a footer with the **number** and the **clock**, either of which may be blank
+
+It follows **Preview at** like the thumbnail does. Stills only for now — a Short is at most three
+minutes, and choosing *which* three minutes of a long recording is a feature of its own. Photo and
+clip renders cannot make one: a photograph or a clip is framed 16:9, with no geometry to rebuild.
+
+### Safe zones
+
+YouTube lays its own buttons and captions over the top 15% and the bottom 20% of a Short. No
+**text** is allowed there. The scenery is — a treeline under the Shorts UI is expected — but a
+line of the column that would reach into either band stops the render before the audio is read,
+with a message naming the line and the setting:
+
+```
+Vertical layout: the title line 2 ('MOUNTAIN PARK') ends at y=1037 of 1280, inside the bottom
+safe zone - layouts.vertical.safe_bottom is 0.2, which keeps text above y=1024. Raise the column
+with layouts.vertical.top, or shrink it with layouts.vertical.title_size.
+```
+
+### Tuning it
+
+Every position and size is in the `"layouts"` block of `lss_presets.json`, under `"vertical"`,
+and nothing in the code needs touching. The numbers are **design units**: the frame is 720 across
+and 1280 down, and the file is scaled to 1080×1920 on the way out, so a size of 110 is 165 pixels.
+
+| key | what it moves |
+|---|---|
+| `top` | the top edge of the whole column; everything stacks down from it |
+| `safe_top`, `safe_bottom` | the bands the text must stay out of, as fractions of the height |
+| `margin` | the space kept either side; every line shrinks to fit inside it |
+| `ground_lift` | raises the scenery off the bottom edge, if you want more of it above the Shorts UI |
+| `*_size`, `*_tracking` | a line's size and letter-spacing: `badge`, `series`, `title`, `tagline`, `footer` |
+| `*_gap` | the space under a line before the next one starts |
+| `title_lines` | `2` lets the place wrap, `1` keeps it on one line and shrinks it instead |
+| `badge_pad_x`, `badge_pad_y` | the pill's padding around its text |
+
+A field you leave out keeps its built-in value, so you only need to write the ones you change.
+The `"landscape"` entry beside it holds the numbers of the ordinary 16:9 slate. Change those and
+every render changes, so leave them alone unless that is what you mean.
+
 ## Photo backgrounds
 
 Instead of a generated silhouette, a render can use your own photographs, cycling on a fixed

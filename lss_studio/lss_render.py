@@ -23,6 +23,10 @@ from PIL import Image, ImageDraw, ImageFont, ImageStat
 
 INK, BONE = "#13232E", "#F0E7D6"     # the default sky, and what reads on it
 FONT = None                      # resolved at runtime
+# The frame layouts - slate positions and sizes, and the vertical frame. The
+# shipped values until run() resolves them against lss_presets.json, once per
+# render as FONT is, so every function below reads one settled record.
+LAYOUTS = presets_mod.LAYOUTS
 
 DEFAULT_OUT = r"Z:\Sounds of the City\LSS Renders"
 DEFAULT_IN = r"Z:\Sounds of the City\FLAC Export"
@@ -221,9 +225,15 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
     A frame taller than 16:9 - the square cover - keeps this same layout and
     moves the slate down with the frame's middle. `dy` is that move, and it is
     exactly 0.0 at 16:9, so every baseline below is the number it always was.
+
+    The vertical Shorts frame is a different layout rather than a moved one:
+    cfg carries its design width (`_dw`, 720 where everything else is 1280)
+    and its already-stacked text column (`_column`), and the column is drawn
+    where the slate would be. Everything under the text is this same function.
     """
-    k = W / 1280.0
-    dh = 1280.0 * H / W              # 720.0 at 16:9, 1280.0 square
+    dw = cfg.get("_dw", 1280.0)
+    k = W / dw
+    dh = dw * H / W                  # 720.0 at 16:9, 1280.0 square and 9:16
     dy = dh / 2.0 - 360.0            # the "CITY . CONDITIONS" line rides the
                                      # frame's middle, as it has since 360/720
     acc = cfg["accent"]
@@ -281,10 +291,18 @@ def compose(cfg, lv, W, H, line_col, out, time_text=None, played=False,
     if wx:
         D.draw_rain(img, wx, W, H, bg, fg)
 
-    D.draw_slate(dr, cfg, W, k, dy,
-                 format_number(cfg.get("number", ""),
-                               cfg.get("number_style", "No.")),
-                 time_text, fg, slate, FONT)
+    if cfg.get("_column") is not None:
+        # the number keeps its own override here too, and a badge is knocked
+        # out of an accent pill in the sky colour
+        D.draw_column(dr, cfg["_column"], W, k,
+                      {"fg": fg, "slate": slate,
+                       "number": cfg.get("number_color") or slate,
+                       "badge": bg, "pill": acc}, FONT)
+    else:
+        D.draw_slate(dr, cfg, W, k, dy,
+                     format_number(cfg.get("number", ""),
+                                   cfg.get("number_style", "No.")),
+                     time_text, fg, slate, FONT, LAYOUTS["landscape"])
     return D.finish(img, W, H, out, **(save or {}))
 
 
@@ -305,15 +323,17 @@ def _horizon(cfg, dh):
     return min(y0 - amp for y0, amp in lay)
 
 
-def _weather(cfg, db, dh=720.0):
+def _weather(cfg, db, dh=720.0, dw=1280.0, lift=0.0):
     """This frame's weather, or None. Built per frame SHAPE, as the scene is:
-    a square cover has a taller sky and gets more of it, not a stretched copy.
+    a square cover has a taller sky and gets more of it, not a stretched copy,
+    and the vertical frame a narrower one with less of it across.
     """
     if (cfg.get("weather") or "off") == "off":
         return None
     return scene_mod.weather(db, state=cfg["weather"],
                              detail=cfg.get("detail", "Default"),
-                             horizon_y=_horizon(cfg, dh), dh=dh)
+                             horizon_y=_horizon(cfg, dh), dh=dh, dw=dw,
+                             lift=lift)
 
 
 def _clouds_only(wx):
@@ -348,27 +368,34 @@ def slate_boxes(cfg, dh=720.0, dy=None):
     nothing in the rendered output would have shown it. Defaults to the
     top-position value, which is the expression this line always held.
     """
-    M = 84.0
+    S = LAYOUTS["landscape"]         # the same record draw_slate is handed
+    M = float(S["margin"])
     if dy is None:
         dy = slate_dy(dh)            # the same slate move compose() makes, so
     out = []                         # the ceiling is measured off the real text
     n = format_number(cfg.get("number", ""), cfg.get("number_style", "No."))
-    nw = D.text_width(n, 27.0, 11.0, FONT) if n else 0.0
+    nw = (D.text_width(n, float(S["series_size"]), float(S["series_tracking"]),
+                       FONT) if n else 0.0)
     # the same shrink-to-fit compose() applies, or a long series name would
     # reserve more width here than it actually occupies
-    avail = 1280.0 - 2 * M - nw - (40.0 if n else 0.0)
-    ssize, strack = 27.0, 11.0
+    avail = 1280.0 - 2 * M - nw - (float(S["number_gap"]) if n else 0.0)
+    ssize, strack = float(S["series_size"]), float(S["series_tracking"])
     for _ in range(24):
         if D.text_width(cfg["series"], ssize, strack, FONT) <= avail:
             break
         ssize *= 0.94
         strack *= 0.94
-    out.append((M, M + D.text_width(cfg["series"], ssize, strack, FONT), 150.0 + dy))
+    sb = S["series_baseline"] + dy
+    out.append((M, M + D.text_width(cfg["series"], ssize, strack, FONT), sb))
     if n:
-        out.append((1280.0 - M - nw, 1280.0 - M, 150.0 + dy))
-    out.append((M, M + D.text_width(cfg["place"], 104.0, 7.0, FONT), 296.0 + dy))
+        out.append((1280.0 - M - nw, 1280.0 - M, sb))
+    out.append((M, M + D.text_width(cfg["place"], float(S["title_size"]),
+                                    float(S["title_tracking"]), FONT),
+                S["title_baseline"] + dy))
     cc = f'{cfg["city"]}  ·  {cfg["conditions"]}'
-    out.append((M, M + D.text_width(cc, 31.0, 8.0, FONT), 360.0 + dy))
+    tb = S["tagline_baseline"] + dy
+    out.append((M, M + D.text_width(cc, float(S["tagline_size"]),
+                                    float(S["tagline_tracking"]), FONT), tb))
     # The clock. Reserved whenever there is one, thumbnail or video: the
     # thumbnail draws it and the video has ffmpeg draw it in the same place, so
     # the column is spoken for either way. Measured off a full-width sample
@@ -376,8 +403,8 @@ def slate_boxes(cfg, dh=720.0, dy=None):
     # night. With no time given there is no clock anywhere, and the column is
     # handed back to the ceiling and the star field.
     if has_clock(cfg):
-        tw = D.text_width("00:00 PM", 31.0, 0.0, FONT)
-        out.append((1280.0 - M - tw, 1280.0 - M, 360.0 + dy))
+        tw = D.text_width("00:00 PM", float(S["clock_size"]), 0.0, FONT)
+        out.append((1280.0 - M - tw, 1280.0 - M, tb))
     return out
 
 
@@ -548,6 +575,209 @@ def _cover(cfg, db, lv, style, scale, dyn, out):
                    time_text=cfg.get("start"), played=True, save=D.png_meta())
 
 
+# ----------------------------------------------------------------- vertical
+# The 9:16 Shorts frame. A LAYOUT, not a crop: the geometry is rebuilt for a
+# 720x1280 design frame off the same envelope seed, as the cover rebuilds it
+# for 1280x1280, and the slate is restacked as a centred column rather than
+# moved. Everything it is sized by lives in lss_presets.LAYOUTS["vertical"].
+
+def _vnum(V, key):
+    """One number from the vertical layout, or an error that names the key."""
+    try:
+        return float(V[key])
+    except (KeyError, TypeError, ValueError):
+        raise SystemExit(f"layouts.vertical.{key} in lss_presets.json must be "
+                         f"a number, not {V.get(key)!r}.")
+
+
+def vertical_frame():
+    """(W, H, dw, dh, lift) of the vertical frame, from the layout record."""
+    V = LAYOUTS["vertical"]
+    W, H = int(_vnum(V, "width")), int(_vnum(V, "height"))
+    dw = _vnum(V, "design_width")
+    if W <= 0 or H <= 0 or dw <= 0:
+        raise SystemExit("layouts.vertical: width, height and design_width "
+                         "must all be above zero.")
+    return W, H, dw, dw * H / W, _vnum(V, "ground_lift")
+
+
+def _fit(text, size, track, width):
+    """Shrink size and tracking together until `text` fits `width` - the move
+    draw_slate makes for a long series name, and at the same 0.94 step."""
+    for _ in range(40):
+        if D.text_width(text, size, track, FONT) <= width:
+            break
+        size *= 0.94
+        track *= 0.94
+    return size, track
+
+
+def _wrap(text, size, track, width, lines):
+    """The title as one line if it fits, else split at the word break that
+    leaves the LONGER half shortest - two balanced lines rather than a full
+    first line and a stray last word."""
+    words = text.split()
+    if (lines < 2 or len(words) < 2
+            or D.text_width(text, size, track, FONT) <= width):
+        return [text]
+
+    def worse(i):
+        return max(D.text_width(" ".join(words[:i]), size, track, FONT),
+                   D.text_width(" ".join(words[i:]), size, track, FONT))
+    i = min(range(1, len(words)), key=worse)
+    return [" ".join(words[:i]), " ".join(words[i:])]
+
+
+def column_layout(cfg):
+    """The vertical frame's text, stacked, as (lines, boxes).
+
+    One function positions the column and both the drawing and the measuring
+    read its result - the landscape slate needed slate_boxes() to mirror
+    draw_slate() by hand, and a column that wraps and shrinks would make that
+    mirror a second layout engine. `lines` goes to lss_draw.draw_column();
+    `boxes` is (x0, x1, ink_bottom) per line, the shape ceiling_profile() and
+    sky() already take.
+
+    Stacked from `top` down: each line's baseline sits its own size below the
+    gap under the line above, so a two-line title pushes everything under it
+    down rather than overlapping it. Every line shrinks to fit the column's
+    width; the title wraps first and shrinks only if a half still does not fit.
+
+    Then the safe zones, and a line that enters one is an ERROR naming the
+    preset key and the line - never a quiet nudge, since a nudged column is a
+    layout nobody chose. A line's extent is nominal, in design units: its
+    baseline less its size above, SLATE_DESCENT below, the pill's padding for
+    the badge. The same rule slate_block() uses, so a machine on the Arial
+    fallback checks the same numbers.
+    """
+    V = LAYOUTS["vertical"]
+    W, H, dw, dh, lift = vertical_frame()
+    colw = dw - 2 * _vnum(V, "margin")
+    n = int(_vnum(V, "title_lines"))
+    if n not in (1, 2):
+        raise SystemExit("layouts.vertical.title_lines must be 1 or 2, not "
+                         f"{V.get('title_lines')!r}.")
+    lines = []
+
+    def add(name, segs, size, track, base, top, bottom, pill=None):
+        text = "".join(t for t, _ in segs)
+        w = (sum(D.text_width(t, size, track, FONT) for t, _ in segs)
+             + track * (len(segs) - 1))
+        lines.append({"name": name, "text": text, "segments": segs,
+                      "size": size, "tracking": track, "baseline": base,
+                      "top": top, "bottom": bottom, "pill": pill,
+                      "x0": (dw - w) / 2.0, "x1": (dw + w) / 2.0})
+
+    y = _vnum(V, "top")
+    badge = (cfg.get("badge") or "").strip().upper()
+    if badge:
+        px, py = _vnum(V, "badge_pad_x"), _vnum(V, "badge_pad_y")
+        size, track = _fit(badge, _vnum(V, "badge_size"),
+                           _vnum(V, "badge_tracking"), colw - 2 * px)
+        base = y + py + size
+        add("badge", [(badge, "badge")], size, track, base, y, base + py,
+            pill=(px, py))
+        y = base + py + _vnum(V, "badge_gap")
+
+    size, track = _fit(cfg["series"], _vnum(V, "series_size"),
+                       _vnum(V, "series_tracking"), colw)
+    base = y + size
+    add("series", [(cfg["series"], "fg")], size, track, base, base - size,
+        base + SLATE_DESCENT)
+    y = base + _vnum(V, "series_gap")
+
+    size, track = _vnum(V, "title_size"), _vnum(V, "title_tracking")
+    title = _wrap(cfg["place"], size, track, colw, n)
+    size, track = _fit(max(title, key=lambda t: D.text_width(t, size, track,
+                                                             FONT)),
+                       size, track, colw)
+    for i, t in enumerate(title):
+        base = y + size if i == 0 else base + _vnum(V, "title_line_gap") + size
+        add("title" if len(title) == 1 else f"title line {i + 1}",
+            [(t, "fg")], size, track, base, base - size, base + SLATE_DESCENT)
+    y = base + _vnum(V, "title_gap")
+
+    tag = f'{cfg["city"]}  ·  {cfg["conditions"]}'
+    size, track = _fit(tag, _vnum(V, "tagline_size"),
+                       _vnum(V, "tagline_tracking"), colw)
+    base = y + size
+    add("tagline", [(tag, "slate")], size, track, base, base - size,
+        base + SLATE_DESCENT)
+    y = base + _vnum(V, "tagline_gap")
+
+    # The footer: the number and the clock, the two runs the landscape slate
+    # hangs off its right-hand edge. Either may be blank; both blank is no line
+    num = format_number(cfg.get("number", ""), cfg.get("number_style", "No."))
+    clock = (cfg.get("start") or "").strip()
+    segs = ([(num, "number")] if num else []) + (
+        [(("  ·  " if num else "") + clock, "slate")] if clock else [])
+    if segs:
+        size, track = _fit("".join(t for t, _ in segs), _vnum(V, "footer_size"),
+                           _vnum(V, "footer_tracking"), colw)
+        base = y + size
+        add("footer", segs, size, track, base, base - size,
+            base + SLATE_DESCENT)
+
+    lo = dh * _vnum(V, "safe_top")
+    hi = dh * (1.0 - _vnum(V, "safe_bottom"))
+    for ln in lines:
+        what = f"the {ln['name']} ('{ln['text']}')"
+        if ln["top"] < lo:
+            raise SystemExit(
+                f"Vertical layout: {what} starts at y={ln['top']:.0f} of "
+                f"{dh:.0f}, inside the top safe zone - "
+                f"layouts.vertical.safe_top is {V['safe_top']:g}, which keeps "
+                f"text below y={lo:.0f}. Move the column down with "
+                "layouts.vertical.top.")
+        if ln["bottom"] > hi:
+            key = ln["name"].split()[0]
+            raise SystemExit(
+                f"Vertical layout: {what} ends at y={ln['bottom']:.0f} of "
+                f"{dh:.0f}, inside the bottom safe zone - "
+                f"layouts.vertical.safe_bottom is {V['safe_bottom']:g}, which "
+                f"keeps text above y={hi:.0f}. Raise the column with "
+                f"layouts.vertical.top, or shrink it with "
+                f"layouts.vertical.{key}_size.")
+    return lines, [(ln["x0"], ln["x1"], ln["bottom"]) for ln in lines]
+
+
+def _vertical(cfg, db, n, style, scale, dyn, out, work, frac):
+    """The vertical frame, built rather than cropped - _cover()'s bargain.
+
+    Same envelope, same seed, rebuilt for a 720-unit-wide frame: the building
+    count is scaled by the width so a block is the same width it is in
+    landscape and there are fewer of them, and every feature is the size it
+    is there because k is the same 1.5. Follows --progress like the thumbnail,
+    since it is a thumbnail - a Short's, not a release's.
+
+    Returns (path, levels) - the levels are the frame's own, and the sidecar
+    records them.
+    """
+    W, H, dw, dh, lift = vertical_frame()
+    lines, boxes = cfg["_vcolumn"]
+    L = scene_mod.vlayout(dh, dw, lift)
+    nv = max(2, int(round(n * dw / 1280.0)))
+    lv = to_levels(db, nv, scale, dyn, align=cfg.get("align_loud", True),
+                   stat=cfg.get("height_stat", "peak"))
+    vcfg = dict(cfg, _dw=dw, _column=lines, _scene=None, _sky=None)
+    if style in scene_mod.SILHOUETTE:
+        ceiling = (scene_mod.ceiling_profile(boxes, free_y=L.ceil_free, dw=dw)
+                   if style == "city" and cfg.get("ceiling_profile", True)
+                   else None)
+        vcfg["_scene"] = scene_mod.build(style, db, lv,
+                                         detail=cfg.get("detail", "Default"),
+                                         scale=scale, dynamics=dyn,
+                                         ceiling=ceiling, dh=dh, dw=dw,
+                                         lift=lift)
+    vcfg["_weather"] = _weather(vcfg, db, dh=dh, dw=dw, lift=lift)
+    if cfg.get("stars"):
+        vcfg["_sky"] = scene_mod.sky(db, detail=cfg.get("detail", "Default"),
+                                     boxes=boxes,
+                                     twinkle=not cfg.get("no_twinkle"),
+                                     dh=dh, dw=dw, lift=lift)
+    return _thumbnail(vcfg, lv, W, H, out, work, frac), lv
+
+
 PHOTO_INTERVAL = getattr(photo_mod, "DEFAULT_INTERVAL", 180.0)
 SLATE_SCOPES = getattr(photo_mod, "SLATE_SCOPES", ["both", "thumbnail", "none"])
 SCRIM_DEFAULT = 0.65             # how heavy the wash behind the slate is on a
@@ -564,20 +794,27 @@ SCRIM_DEFAULT = 0.65             # how heavy the wash behind the slate is on a
 # - these move it as a unit, through the design-unit `dy` draw_slate has taken
 # since the cover - so every size, margin and tracking in it is untouched.
 SLATE_POSITIONS = ["top", "middle", "bottom"]
-SLATE_BLOCK_TOP = 123.0          # the series baseline (150) less its own size
-                                 # (27). Stated in DESIGN units rather than
-                                 # measured off the font: the real ink top is
-                                 # 131 with Barlow Condensed Bold, but a
-                                 # machine on the Arial fallback must not get a
-                                 # different layout
-SLATE_BLOCK_BOT = 368.0          # the last baseline (360) plus a descender
-                                 # allowance. slate_boxes() says a baseline IS
+SLATE_DESCENT = 8.0              # a descender allowance under the last
+                                 # baseline. slate_boxes() says a baseline IS
                                  # the ink bottom because the slate is caps
                                  # throughout, which is very slightly
                                  # optimistic - the comma in "PHOENIX, AZ"
                                  # drops 3 units under it
-SLATE_MARGIN = 84.0              # the same margin draw_slate already keeps on
-                                 # the left and right
+
+
+def slate_block():
+    """(top, bottom, margin) of the landscape slate block, in design units.
+
+    The top is the series baseline less its own size - 150 less 27, 123.
+    Stated in DESIGN units rather than measured off the font: the real ink top
+    is 131 with Barlow Condensed Bold, but a machine on the Arial fallback must
+    not get a different layout. The bottom is the tagline baseline plus
+    SLATE_DESCENT - 368. The margin is the one draw_slate keeps left and right.
+    Read off the layout record, so a tuned slate moves its block with it.
+    """
+    S = LAYOUTS["landscape"]
+    return (float(S["series_baseline"] - S["series_size"]),
+            S["tagline_baseline"] + SLATE_DESCENT, float(S["margin"]))
 
 
 def slate_dy(dh=720.0, position="top"):
@@ -592,10 +829,11 @@ def slate_dy(dh=720.0, position="top"):
     expression each caller used to compute inline - 0.0 at 16:9, and the same
     downward move at a square cover.
     """
+    top, bot, margin = slate_block()
     if position == "bottom":
-        return dh - SLATE_MARGIN - SLATE_BLOCK_BOT
+        return dh - margin - bot
     if position == "middle":
-        return dh / 2.0 - (SLATE_BLOCK_TOP + SLATE_BLOCK_BOT) / 2.0
+        return dh / 2.0 - (top + bot) / 2.0
     return dh / 2.0 - 360.0
 
 
@@ -607,10 +845,11 @@ def scrim_band(dh, dy, ink_bottom, position="top"):
     0 -> the slate's lowest ink, which is the single downward ramp the wash has
     always been.
     """
+    top = slate_block()[0]
     if position == "bottom":
-        return SLATE_BLOCK_TOP + dy, dh
+        return top + dy, dh
     if position == "middle":
-        return SLATE_BLOCK_TOP + dy, ink_bottom
+        return top + dy, ink_bottom
     return 0.0, ink_bottom
 
 
@@ -846,7 +1085,7 @@ def _photo_frame(cfg, path, W, H, slate_on, time_text=None, out=None,
         img = D.slate_over(
             img, cfg, W, H, k, dh / 2.0 - 360.0,
             format_number(cfg.get("number", ""), cfg.get("number_style", "No.")),
-            time_text, fg, slate, FONT)
+            time_text, fg, slate, FONT, LAYOUTS["landscape"])
     if out:
         img.save(out, **(save or {}))
         img = out
@@ -866,14 +1105,15 @@ def clock_box(W, H, sample="06:30 PM"):
     """Position and size for the live clock so it lands exactly where the
     thumbnail draws its static one."""
     from PIL import ImageFont
+    S = LAYOUTS["landscape"]
     k = W / 1280.0
-    size = int(round(31 * k))
-    baseline = (360 + (1280.0 * H / W) / 2.0 - 360.0) * k
+    size = int(round(S["clock_size"] * k))
+    baseline = (S["tagline_baseline"] + (1280.0 * H / W) / 2.0 - 360.0) * k
     f = ImageFont.truetype(FONT, size)
     ink_top = baseline + f.getbbox(sample, anchor="ls")[1]
     return {"size": size,
             "y": int(round(ink_top - _drawtext_ink_top(size, sample))),
-            "right_margin": int(round(84 * k))}
+            "right_margin": int(round(S["margin"] * k))}
 
 
 def make_bands(cfg, W, dur):
@@ -1484,7 +1724,7 @@ def _slate_overlay(cfg, W, H, time_text, out):
     D.draw_slate(ImageDraw.Draw(layer), cfg, W, k, dy,
                  format_number(cfg.get("number", ""),
                                cfg.get("number_style", "No.")),
-                 time_text, fg, slate, FONT)
+                 time_text, fg, slate, FONT, LAYOUTS["landscape"])
     pm_im, am_im = D.premultiplied(layer, W, H)
 
     # float32, not 64: every value here is a small integer and a 24-bit mantissa
@@ -2198,7 +2438,8 @@ def loop_thumbnail(cfg, src, at, tw, th, work, out):
                        format_number(cfg.get("number", ""),
                                      cfg.get("number_style", "No.")),
                        cfg["slate_time"], fg,
-                       fg if cfg.get("slate_mono") else cfg["accent"], FONT)
+                       fg if cfg.get("slate_mono") else cfg["accent"], FONT,
+                       LAYOUTS["landscape"])
     img.save(out)
     os.remove(png)
     return out, under
@@ -2206,7 +2447,7 @@ def loop_thumbnail(cfg, src, at, tw, th, work, out):
 
 # ----------------------------------------------------------------- driver
 def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None, cover=None,
-             photos=None):
+             photos=None, vertical=None):
     """Everything needed to understand or reproduce a render, saved beside it."""
     import datetime
     if variants:
@@ -2227,6 +2468,7 @@ def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None, cover=None,
             "start_time": cfg.get("start"),
             "number": cfg.get("number"),
             "number_style": cfg.get("number_style"),
+            "badge": cfg.get("badge") or "",
         },
         "look": {
             "scene": cfg.get("scene", ""),
@@ -2285,12 +2527,28 @@ def _sidecar(cfg, lv, dur, scale, dyn, n, variants=None, cover=None,
         "cover": ({"file": os.path.basename(cover), "size": COVER_PX,
                    "design_height": COVER_DH, "dpi": 300}
                   if cover else None),
+        # the vertical frame is its own build, so it carries its own levels
+        # and the column as it was actually stacked - wrapped and shrunk
+        "vertical": (_vertical_sidecar(cfg, vertical) if vertical else None),
         "photos": photos,
         "variants": variants or [],
         "source_audio": os.path.basename(cfg.get("audio", "")),
         "duration_s": dur,
         "levels": lv,
     }
+
+
+def _vertical_sidecar(cfg, vertical):
+    """The vertical frame's block of the sidecar."""
+    W, H, dw, dh, lift = vertical_frame()
+    return {"file": os.path.basename(vertical["path"]), "size": [W, H],
+            "design": [dw, dh], "ground_lift": lift,
+            "tower_count": len(vertical["levels"]),
+            "column": [{"line": ln["name"], "text": ln["text"],
+                        "size": round(ln["size"], 2),
+                        "baseline": round(ln["baseline"], 2)}
+                       for ln in cfg["_vcolumn"][0]],
+            "levels": vertical["levels"]}
 
 
 def _photo_targets(cfg):
@@ -2408,8 +2666,9 @@ def _run_photo(cfg, slug, outdir, work, progress, on_progress, stage):
 
 
 def run(cfg, progress=lambda s: None, on_progress=None):
-    global FONT
+    global FONT, LAYOUTS
     FONT = find_font()
+    LAYOUTS = presets_mod.layouts()
     if not shutil.which("ffmpeg"):
         raise SystemExit("ffmpeg not found on PATH.")
     # settle the sky before anything draws, so every caller - GUI, CLI, or a
@@ -2473,6 +2732,19 @@ def run(cfg, progress=lambda s: None, on_progress=None):
         a = cfg["_audio_info"]
         progress(f"Audio: {os.path.basename(cfg['audio'])}  {a['codec']}, "
                  f"{a['channels']}ch, {a['sample_rate']} Hz")
+    # The vertical frame's column is laid out and checked against its safe
+    # zones HERE, before the audio pass: it needs only the slate text and the
+    # font, and a collision found after reading a three-hour recording is the
+    # failure this whole early block exists to avoid.
+    if cfg.get("badge") and not cfg.get("vertical"):
+        raise SystemExit("--badge needs --vertical: the badge is drawn on the "
+                         "vertical frame only.")
+    if cfg.get("vertical"):
+        if cfg.get("photos") or cfg.get("video"):
+            raise SystemExit("--vertical is for generated renders: a photo or "
+                             "a clip is framed 16:9 and has no geometry to "
+                             "rebuild for a tall frame.")
+        cfg["_vcolumn"] = column_layout(cfg)
 
     # degrade an unmounted network path here rather than in the GUI, so the CLI
     # stays usable off the studio's network too instead of dying in makedirs
@@ -2625,15 +2897,29 @@ def run(cfg, progress=lambda s: None, on_progress=None):
                  f"{COVER_PX}×{COVER_PX}, "
                  f"{os.path.getsize(cover) / 1e6:.2f} MB")
 
+    vert = None
+    if cfg.get("vertical"):
+        progress("Building vertical…")
+        vpath, vlv = _vertical(cfg, db, n, style, scale, dyn,
+                               os.path.join(outdir, f"{slug}_vertical.png"),
+                               work, frac)
+        vert = {"path": vpath, "levels": vlv}
+        W_, H_ = vertical_frame()[:2]
+        progress(f"  {os.path.basename(vpath)}  {W_}×{H_}, {len(vlv)} towers, "
+                 f"title on {sum(1 for l in cfg['_vcolumn'][0] if l['name'].startswith('title'))} "
+                 f"line(s)")
+
     if cfg.get("thumb_only"):
-        json.dump(_sidecar(cfg, lv, dur, scale, dyn, n, variants, cover),
+        json.dump(_sidecar(cfg, lv, dur, scale, dyn, n, variants, cover,
+                           vertical=vert),
                   open(os.path.join(outdir, f"{slug}_render.json"), "w"), indent=2)
         shutil.rmtree(work, ignore_errors=True)
         if on_progress:
             on_progress(1.0, 0)
         progress("Done (thumbnail only).")
         return {"thumbnail": thumbs[0], "thumbnails": thumbs, "video": None,
-                "cover": cover, "duration": dur, "folder": outdir}
+                "cover": cover, "vertical": vert and vert["path"],
+                "duration": dur, "folder": outdir}
 
     W, H = cfg.get("width", 2560), cfg.get("height", 1440)
     progress("Building frame layers…")
@@ -2648,12 +2934,14 @@ def run(cfg, progress=lambda s: None, on_progress=None):
                       os.path.join(outdir, f"{slug}.mp4"),
                       fps=cfg.get("fps", 10), on_progress=stage(0.18, 1.0))
 
-    json.dump(_sidecar(cfg, lv, dur, scale, dyn, n, None, cover),
+    json.dump(_sidecar(cfg, lv, dur, scale, dyn, n, None, cover,
+                       vertical=vert),
               open(os.path.join(outdir, f"{slug}_render.json"), "w"), indent=2)
     shutil.rmtree(work, ignore_errors=True)
     progress("Done.")
     return {"thumbnail": thumbs[0], "thumbnails": thumbs, "video": vid,
-            "cover": cover, "duration": dur, "folder": outdir}
+            "cover": cover, "vertical": vert and vert["path"],
+            "duration": dur, "folder": outdir}
 
 
 def main():
@@ -2678,6 +2966,11 @@ def main():
                         "video, and --date is then not needed")
     g.add_argument("--number", default="")
     g.add_argument("--number-style", default="No.", choices=list(NUM_STYLES))
+    g.add_argument("--badge", default="", metavar="TEXT",
+                   help="a small label in an accent pill above the series on "
+                        "the vertical frame, e.g. LIVE. Off unless given, and "
+                        "--vertical only - the landscape slate has no slot "
+                        "for one")
 
     g = a.add_argument_group("look", "colour and silhouette")
     g.add_argument("--series", "--preset", dest="series_key",
@@ -2875,6 +3168,15 @@ def main():
                         "- more sky, the slate on the frame's middle - always "
                         "as the finished fully-played frame. Adds about half a "
                         "second and composes with everything else")
+    g.add_argument("--vertical", action="store_true",
+                   help="also write a 1080x1920 frame for YouTube Shorts, "
+                        "rebuilt rather than cropped: the same recording's "
+                        "scene on a 9:16 frame - fewer buildings across at "
+                        "the same size, more sky - with the slate restacked "
+                        "as a centred column clear of the Shorts UI. A still, "
+                        "following --progress like the thumbnail. Sizes, "
+                        "positions and safe zones are the 'vertical' layout "
+                        "in lss_presets.json")
     g.add_argument("--slate-scope", default="both",
                    choices=SLATE_SCOPES,
                    help="which outputs carry the slate in photo mode: both, "
@@ -2955,6 +3257,11 @@ def main():
         if n.slate_position != SLATE_POSITIONS[0]:
             a.error("--slate-position is --video only for now: photo mode "
                     "always draws its slate at the top.")
+        if n.vertical or n.badge:
+            a.error(("--vertical" if n.vertical else "--badge")
+                    + " has no meaning with --photos: a photograph is framed "
+                    "16:9 and there is no geometry to rebuild for a tall "
+                    "frame.")
     elif n.video:
         # the same RAW namespace rule, for the same reason
         try:
@@ -2966,6 +3273,11 @@ def main():
                                 looping=bool(n.audio)))
         if err:
             a.error(err)
+        if n.vertical or n.badge:
+            a.error(("--vertical" if n.vertical else "--badge")
+                    + " has no meaning with --video: a clip is framed as it "
+                    "was shot, and there is no geometry to rebuild for a tall "
+                    "frame.")
         dead = [("--width", n.width, 2560), ("--height", n.height, 1440),
                 ("--fps", n.fps, 10)]
         if not n.audio:
@@ -3003,6 +3315,9 @@ def main():
                 a.error(f"{flag} needs --photos: it only means something for a "
                         "photo render. A generated render always carries its "
                         "slate, and has no photographs to wash behind it.")
+        if n.badge and not n.vertical:
+            a.error("--badge needs --vertical: the badge is drawn on the "
+                    "vertical frame only.")
         if n.slate_position != SLATE_POSITIONS[0]:
             a.error("--slate-position needs --video: a generated render lays "
                     "its silhouette out around a slate at the top, and the "
@@ -3075,6 +3390,8 @@ def main():
         print(f"thumbnail : {p}")
     if r.get("cover"):
         print(f"cover     : {r['cover']}")
+    if r.get("vertical"):
+        print(f"vertical  : {r['vertical']}")
     if r["video"]:
         print(f"video     : {r['video']}")
 

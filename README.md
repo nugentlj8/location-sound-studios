@@ -127,7 +127,7 @@ The apparent animation costs two composites total.
 The parts I would actually want to talk about in an interview. Every number below is measured
 on this machine, not estimated — the repo carries a benchmark harness
 (`tools/encode_bench.py`) and a byte-for-byte regression checker (`tools/identity_check.py`,
-213 cases) because on a generative renderer "it still looks fine" is not evidence.
+292 cases) because on a generative renderer "it still looks fine" is not evidence.
 
 **Resizing a premultiplied RGBA image is a trap.** Compositing the slate onto a photo, the
 obvious implementation — premultiply, hand Pillow one RGBA image, resize — produces bright

@@ -150,7 +150,8 @@ def text_width(s, size, tracking, font_path):
             + tracking * SS * (len(s) - 1)) / SS
 
 
-def draw_slate(dr, cfg, W, k, dy, number, time_text, fg, slate, font_path):
+def draw_slate(dr, cfg, W, k, dy, number, time_text, fg, slate, font_path,
+               S=None):
     """Every run of slate text, in design units scaled by k.
 
     Lifted out of lss_render.compose() unchanged - same expressions, same
@@ -164,35 +165,89 @@ def draw_slate(dr, cfg, W, k, dy, number, time_text, fg, slate, font_path):
     numero-sign fallback needs the loaded font and the number styles are its
     table. What is left here is drawing, which is what this module is.
 
+    `S` is the landscape layout record (lss_presets.LAYOUTS) - every number
+    that used to be a literal here, by name. None is the shipped one.
+
     lss_render.slate_boxes() measures these same runs at k=1 to find where the
     ink ends. If a position below moves, that has to move with it.
     """
-    M = 84 * k
+    if S is None:
+        import lss_presets
+        S = lss_presets.LAYOUTS["landscape"]
+    M = S["margin"] * k
     n = number
-    nw = text_width(n, 27 * k, 11 * k, font_path) if n else 0.0
-    avail = W - 2 * M - nw - (40 * k if n else 0)
+    nw = (text_width(n, S["series_size"] * k, S["series_tracking"] * k,
+                     font_path) if n else 0.0)
+    avail = W - 2 * M - nw - (S["number_gap"] * k if n else 0)
 
     # a theme suffix can make the series long; shrink it to clear the number
-    ssize, strack = 27 * k, 11 * k
+    ssize, strack = S["series_size"] * k, S["series_tracking"] * k
     for _ in range(24):
         if text_width(cfg["series"], ssize, strack, font_path) <= avail:
             break
         ssize *= 0.94
         strack *= 0.94
-    text_run(dr, cfg["series"], ssize, strack, M, (150 + dy) * k, fg, font_path)
+    text_run(dr, cfg["series"], ssize, strack, M,
+             (S["series_baseline"] + dy) * k, fg, font_path)
     if n:
         # --number-color outranks both the accent and --slate-mono: it is the
         # one run someone asked for by name. Blank leaves it with the others
-        text_run(dr, n, 27 * k, 11 * k, W - M - nw, (150 + dy) * k,
+        text_run(dr, n, S["series_size"] * k, S["series_tracking"] * k,
+                 W - M - nw, (S["series_baseline"] + dy) * k,
                  cfg.get("number_color") or slate, font_path)
 
-    text_run(dr, cfg["place"], 104 * k, 7 * k, M, (296 + dy) * k, fg, font_path)
+    text_run(dr, cfg["place"], S["title_size"] * k, S["title_tracking"] * k,
+             M, (S["title_baseline"] + dy) * k, fg, font_path)
     text_run(dr, f'{cfg["city"]}  ·  {cfg["conditions"]}',
-             31 * k, 8 * k, M, (360 + dy) * k, slate, font_path)
+             S["tagline_size"] * k, S["tagline_tracking"] * k, M,
+             (S["tagline_baseline"] + dy) * k, slate, font_path)
     if time_text:                    # blank start time: no clock at all
-        w = text_width(time_text, 31 * k, 0, font_path)
-        text_run(dr, time_text, 31 * k, 0, W - M - w, (360 + dy) * k, slate,
-                 font_path)
+        w = text_width(time_text, S["clock_size"] * k, 0, font_path)
+        text_run(dr, time_text, S["clock_size"] * k, 0, W - M - w,
+                 (S["tagline_baseline"] + dy) * k, slate, font_path)
+
+
+def draw_column(dr, lines, W, k, cols, font_path):
+    """The vertical frame's text: a centred column of lines, top to bottom.
+
+    Nothing is positioned here. lss_render.column_layout() stacks the lines,
+    wraps and shrinks the title, and checks the result against the safe zones;
+    this only centres each line at the size it is actually drawn at and puts
+    it down. Centring at draw time rather than from a width measured at k=1 is
+    what keeps a line centred to the pixel - font hinting makes the two widths
+    differ by a fraction at every size, and on a centred line that fraction is
+    a visible lean.
+
+    A line is one or more SEGMENTS - the footer is the number and the clock,
+    which take different colours - laid end to end and centred as one. `cols`
+    maps each segment's colour role to the colour this frame draws it in.
+
+    The badge is the one line with a shape behind it: a pill in the accent,
+    its text knocked out in the sky colour, sized off the glyphs' own ink so
+    the padding is even above and below whatever the font does.
+    """
+    for ln in lines:
+        size, track = ln["size"] * k, ln["tracking"] * k
+        segs = [(t, cols[c]) for t, c in ln["segments"]]
+        widths = [text_width(t, size, track, font_path) for t, _ in segs]
+        # tracking is applied between glyphs only, so the gap between two
+        # segments needs one more of it to read as the same run
+        w = sum(widths) + track * (len(segs) - 1)
+        x = (W - w) / 2.0
+        base = ln["baseline"] * k
+        if ln.get("pill"):
+            px, py = ln["pill"]
+            f = _font(font_path, max(1, int(round(size * SS))))
+            top = base + f.getbbox("".join(t for t, _ in segs),
+                                   anchor="ls")[1] / SS
+            dr.rounded_rectangle(
+                [(x - px * k) * SS, (top - py * k) * SS,
+                 (x + w + px * k) * SS, (base + py * k) * SS],
+                radius=(base - top + 2 * py * k) * SS / 2.0,
+                fill=rgb(cols["pill"]))
+        for (t, c), sw in zip(segs, widths):
+            text_run(dr, t, size, track, x, base, c, font_path)
+            x += sw + track
 
 
 def new_canvas(W, H, bg="#13232E"):
@@ -632,7 +687,7 @@ def draw_clouds(dr, wx, W, H, bg, fg):
     is cut by the silhouette drawn over it, and a cloud behind the slate is cut
     by text that draws last and opaque - which is the read being aimed for.
     """
-    k = W / 1280.0
+    k = W / wx.get("dw", 1280.0)
     t = weather_tones(bg, fg)
     for c in wx.get("clouds") or []:
         # the shaded copy first, then the body riding above it - so what shows
@@ -666,7 +721,7 @@ def draw_rain(img, wx, W, H, bg, fg):
     r = (wx or {}).get("rain")
     if not r:
         return
-    k = W / 1280.0
+    k = W / wx.get("dw", 1280.0)
     mask = Image.new("L", img.size, 0)
     md = ImageDraw.Draw(mask)
     # design units, so a streak is 1.7px on a 1920 thumbnail and 2.7px on the
@@ -695,7 +750,7 @@ def draw_sky(dr, sky, W, H, col, bg):
     video layers alike. The filters only ever take a star DOWN from here, so a
     frame of the video can never hold a thinner field than its own thumbnail.
     """
-    k = W / 1280.0
+    k = W / sky.get("dw", 1280.0)
     for s in sky.get("stars", []):
         x0, y0, n = star_rect(s, k, SS)
         dr.rectangle([x0, y0, x0 + n - 1, y0 + n - 1],
@@ -720,7 +775,7 @@ def draw_scene(dr, sc, W, H, col, bg, played=False, face="outline",
     a nearer shape occlusion over a further one without a vector clipper, and
     it is why an outline-only mountain still hides the range behind it.
     """
-    k = W / 1280.0
+    k = W / sc.get("dw", 1280.0)
 
     for m in sc.get("mountains", []):
         c = _band_col(bands, m["cx"], k, col)
@@ -1011,7 +1066,8 @@ def premultiplied(layer, W, H):
     return pm, a.resize((W, H), Image.LANCZOS)
 
 
-def slate_over(base, cfg, W, H, k, dy, number, time_text, fg, slate, font_path):
+def slate_over(base, cfg, W, H, k, dy, number, time_text, fg, slate, font_path,
+               S=None):
     """The slate composited onto a photograph. Returns a new RGB image.
 
     The slate is drawn at SS on a transparent layer and brought down onto a
@@ -1033,7 +1089,7 @@ def slate_over(base, cfg, W, H, k, dy, number, time_text, fg, slate, font_path):
     """
     layer = Image.new("RGBA", (W * SS, H * SS), (0, 0, 0, 0))
     draw_slate(ImageDraw.Draw(layer), cfg, W, k, dy, number, time_text,
-               fg, slate, font_path)
+               fg, slate, font_path, S)
     pm, am = premultiplied(layer, W, H)
     inv = ImageChops.invert(am)
     keep = ImageChops.multiply(base.convert("RGB"),

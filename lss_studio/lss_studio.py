@@ -164,6 +164,17 @@ class App:
         ttk.Label(nf, text="  blank to hide it",
                   foreground=MUTED).pack(side="left")
         sr += 1
+        # Only the vertical frame has a slot for it, so it follows that tick -
+        # see _vertical_changed - rather than being typed and then refused.
+        ttk.Label(slate, text="Badge").grid(row=sr, column=0, sticky="w",
+                                            padx=(0, 12), pady=4)
+        bf = ttk.Frame(slate)
+        bf.grid(row=sr, column=1, columnspan=2, sticky="ew", pady=4)
+        self.badge = ttk.Entry(bf, width=12)
+        self.badge.pack(side="left")
+        self.badgehint = ttk.Label(bf, foreground=MUTED)
+        self.badgehint.pack(side="left")
+        sr += 1
         self.outname = self._entry(slate, sr, "Output file name", ""); sr += 1
         ttk.Label(slate, text="Names the folder and files, not the frame. "
                               "Blank uses the place.",
@@ -413,6 +424,11 @@ class App:
         self.cover = tk.BooleanVar(value=False)
         ttk.Checkbutton(act, text="Spotify cover — 3000×3000 square",
                         variable=self.cover).pack(side="left", padx=(16, 0))
+        self.vertical = tk.BooleanVar(value=False)
+        self.verticalbox = ttk.Checkbutton(
+            act, text="Shorts 9:16", variable=self.vertical,
+            command=self._vertical_changed)
+        self.verticalbox.pack(side="left", padx=(16, 0))
         # Photo mode only, so it starts greyed: a generated render always
         # carries its slate and there is nothing here to choose.
         ttk.Label(act, text="Slate on").pack(side="left", padx=(16, 6))
@@ -440,6 +456,7 @@ class App:
         self.log.grid(row=r, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
         f.rowconfigure(r, weight=1)
         self._thumbonly_changed()
+        self._vertical_changed()
         self.say("Choose an audio file and fill in the slate, then press Render.")
         self.root.after(120, self.drain)
         self.root.after(400, self._check_updates)
@@ -499,6 +516,16 @@ class App:
             if on else "Tick Thumbnail only to render several colours at once.")
         self._photo_apply()
 
+    def _vertical_changed(self):
+        """The badge is drawn on the vertical frame only, so it is typed only
+        when that frame is being made."""
+        on = bool(self.vertical.get())
+        self.badge.config(state="normal" if on else "disabled")
+        self.badgehint.config(
+            text="  e.g. LIVE — blank for none" if on
+            else "  tick Shorts to add one")
+        self._photo_apply()
+
     def _photos_add(self):
         paths = filedialog.askopenfilenames(
             title="Choose photographs",
@@ -544,6 +571,9 @@ class App:
         for w in (self.blinkbox, self.starsbox, self.twinklebox, self.filledbox):
             w.config(state="disabled")
         self.variants.config(state="disabled")
+        # a photo is framed 16:9 - there is no geometry for a tall frame
+        self.verticalbox.config(state="disabled")
+        self.badge.config(state="disabled")
 
     def _photo_mode_changed(self):
         """The window refuses what lss_photo.check would refuse, rather than
@@ -563,9 +593,11 @@ class App:
             for w in (self.blinkbox, self.starsbox, self.twinklebox,
                       self.filledbox):
                 w.config(state="normal")
+            self.verticalbox.config(state="normal")
             self._style_changed()
             self._colors_changed()
             self._thumbonly_changed()
+            self._vertical_changed()
 
     def _picked_variants(self):
         """Selected colour presets, but only when they can actually be used -
@@ -744,6 +776,9 @@ class App:
                 if payload.get("cover"):
                     self.say("Cover     : "
                              + os.path.basename(payload["cover"]))
+                if payload.get("vertical"):
+                    self.say("Vertical  : "
+                             + os.path.basename(payload["vertical"]))
                 self.say("Video     : " + payload["video"] if payload.get("video")
                          else "(thumbnail only — no video rendered)")
             elif kind == "error":
@@ -966,6 +1001,10 @@ class App:
             "scrim": self._photo_numbers()[1],
             "thumb_only": bool(self.thumbonly.get()),
             "cover": bool(self.cover.get()),
+            "vertical": bool(self.vertical.get()) and not self.photo_mode.get(),
+            "badge": (self.badge.get().strip().upper()
+                      if self.vertical.get() and not self.photo_mode.get()
+                      else ""),
             "slate_mono": bool(self.mono.get()),
             "number_color": self.cust_num.get().strip().upper(),
             "outname": self.outname.get().strip(),
