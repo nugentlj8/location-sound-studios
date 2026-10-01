@@ -2032,8 +2032,10 @@ def _video_sidecar(cfg, info, worst, where, when, samples, out):
             "fps_mode": "passthrough",
             "colour_tags": [info["primaries"], info["trc"], info["space"]],
             "audio": "stripped",
-            "file": os.path.basename(out),
-            "size_mb": round(os.path.getsize(out) / 1e6, 2),
+            # a looped --thumb-only render reaches here with no video at all,
+            # and getsize('') is a FileNotFoundError, not a zero
+            "file": os.path.basename(out) if out else None,
+            "size_mb": round(os.path.getsize(out) / 1e6, 2) if out else None,
         },
     }
 
