@@ -220,22 +220,32 @@ self-explanatory on reading, bar the alpha rule under Conventions):
 - **`lss_studio.py`** — the Tkinter GUI. Builds the config dict expected by `lss_render.run()` and
   calls it in a background thread, polling a `queue.Queue` on a Tk `after()` timer for log lines and
   progress. Not the place to add render logic — it's a thin form over `lss_render.run()`.
-  Settings live on a `ttk.Notebook` of six tabs — Slate, Look, Colour, Shape, Video, Photo — matching the
+  Settings live on a `ttk.Notebook` of seven tabs — Slate, Look, Colour, Shape, Video, Photo, Clip — matching the
   argparse groups in `lss_render.main()` (Look and Colour share the `look` group); put a new setting
   in the group that matches what it decides, and in the same group on both sides. The audio/output fields and the Render button,
   Thumbnail only and Preview at controls stay outside the tabs and always visible. Keep the form's
   requested height under ~1000px or it clips on a laptop screen, which is what the tabs are for.
   The notebook sizes to its TALLEST tab, which is why photo mode got a tab of its own rather than
   more rows on Look: a sixth tab costs no height at all (measured: 857px before and after).
-  `_photo_apply()` only ever DISABLES, and runs at the end of `_style_changed`/`_colors_changed`/
+  `_mode_apply()` only ever DISABLES, and runs at the end of `_style_changed`/`_colors_changed`/
   `_thumbonly_changed`, so it can never hand back what their finer greying just took away;
-  `_photo_mode_changed` is the one that restores, and it restores before calling them.
-  `--video` (5g) is deliberately **not** here: it is CLI-only for now, so the usual rule that a
-  setting goes in the matching group on both sides does not yet apply to it. Adding it means a
-  seventh tab and a fourth thing for `_photo_apply()`'s disable-only discipline to agree with.
+  `_mode_changed` is the one that restores, and it restores before calling them. It serves both
+  non-generated modes — photo (5f) and clip (5g/5h) — and `_mode()` says which is on; each
+  mode's tick greys the other's out, so they can never both be.
+  Clip mode (`--video`) is the Clip tab. The Start time on the Slate tab is its `--slate-time`,
+  and the audio field above the tabs is what picks bare against looped, exactly as on the CLI:
+  `_audio_changed` (a trace on `audio_var`, read rather than the entry because the trace fires
+  before the entry catches up) greys the intro/outro/thumbnail rows without one, and Thumbnail
+  only with it, since a bare clip writes no still. Clip mode additionally greys Resolution,
+  Preview at and the cover; `start_render()` masks whatever those boxes still hold behind the
+  grey back to what `main()` would send, rather than calling `_video_check()`. The seventh tab
+  cost nothing: 1140x882 before and after.
+  `work()` catches `SystemExit` as well as `Exception`. The renderer raises its refusals as
+  SystemExit — a portrait clip, a slate schedule longer than the audio — and in a worker
+  thread an uncaught one ends the thread silently and leaves the window on "Rendering…".
   `--vertical` is the "Shorts 9:16" tick beside the cover in the always-visible row, and
   `--badge` is on the Slate tab, typeable only while that tick is on (`_vertical_changed`).
-  Both are among what `_photo_apply()` disables. That row sets the window's WIDTH: the tick
+  Both are among what `_mode_apply()` disables. That row sets the window's WIDTH: the tick
   took it from 1046px to 1140px, which is why its label is short. "Let the rain shimmer"
   (`--no-shimmer`) sits under Weather on the Look tab, greyed unless the weather is rain
   (`_weather_changed`); Look is the tallest tab, so it took the window from 866px to 882px.

@@ -84,7 +84,7 @@ samples across the runtime rather than trusting a single frame.
 
 ### The desktop app
 
-A Tkinter form over the render engine — six tabs matching the CLI's own argument groups, a
+A Tkinter form over the render engine — seven tabs matching the CLI's own argument groups, a
 background render thread, and a log that streams progress back to the window.
 
 ![The Location Sound Studios window, showing the Look tab with series, silhouette, detail, star and weather controls](docs/images/gui.png)

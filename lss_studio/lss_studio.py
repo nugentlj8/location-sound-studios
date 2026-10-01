@@ -132,10 +132,11 @@ class App:
         nb = ttk.Notebook(f)
         nb.grid(row=r, column=0, columnspan=3, sticky="nsew", pady=(16, 4))
         r += 1
-        slate, look, colour, shape, video, photo = (ttk.Frame(nb, padding=14)
-                                                    for _ in range(6))
+        slate, look, colour, shape, video, photo, clip = (
+            ttk.Frame(nb, padding=14) for _ in range(7))
         for tab, title in ((slate, "Slate"), (look, "Look"), (colour, "Colour"),
-                           (shape, "Shape"), (video, "Video"), (photo, "Photo")):
+                           (shape, "Shape"), (video, "Video"), (photo, "Photo"),
+                           (clip, "Clip")):
             tab.columnconfigure(1, weight=1)
             nb.add(tab, text=title)
 
@@ -351,7 +352,7 @@ class App:
         self.photo_mode = tk.BooleanVar(value=False)
         self.photobox = ttk.Checkbutton(
             photo, text="Use photographs instead of a generated silhouette",
-            variable=self.photo_mode, command=self._photo_mode_changed)
+            variable=self.photo_mode, command=self._mode_changed)
         self.photobox.grid(row=pr, column=1, sticky="w", pady=4)
         pr += 1
         ttk.Label(photo, text="The recording decides how long the cycle runs; "
@@ -403,6 +404,60 @@ class App:
                   foreground=MUTED).grid(row=pr, column=1, sticky="w", pady=(0, 6))
         pr += 1
 
+        # ---------- clip: the slate burned onto footage you shot ----------
+        # The third mode, lss_render's --video. The audio file above is what
+        # decides between its two shapes: blank is one pass over one clip with
+        # the slate on throughout, chosen is the clip looped to the recording's
+        # length with the slate only at each end - so the loop rows follow the
+        # audio field (_audio_changed) rather than a tick of their own.
+        kr = 0
+        self.clip_mode = tk.BooleanVar(value=False)
+        self.clipbox = ttk.Checkbutton(
+            clip, text="Burn the slate onto my own video clip",
+            variable=self.clip_mode, command=self._mode_changed)
+        self.clipbox.grid(row=kr, column=1, sticky="w", pady=4)
+        kr += 1
+        ttk.Label(clip, text="The slate shows the Start time, frozen. Camera "
+                             "audio is dropped; Look and Shape grey out.",
+                  foreground=MUTED).grid(row=kr, column=1, sticky="w", pady=(0, 10))
+        kr += 1
+        ttk.Label(clip, text="Clip").grid(row=kr, column=0, sticky="w",
+                                          padx=(0, 12), pady=4)
+        cf = ttk.Frame(clip)
+        cf.grid(row=kr, column=1, columnspan=2, sticky="ew", pady=4)
+        cf.columnconfigure(0, weight=1)
+        self.clip = ttk.Entry(cf)
+        self.clip.grid(row=0, column=0, sticky="ew")
+        ttk.Button(cf, text="Choose…", command=self.pick_clip).grid(
+            row=0, column=1, padx=(8, 0))
+        kr += 1
+        ttk.Label(clip, text="Landscape, at least %dpx wide. Its resolution and "
+                             "frame rate are kept exactly." % lss_render.VIDEO_MIN_W,
+                  foreground=MUTED).grid(row=kr, column=1, sticky="w", pady=(0, 8))
+        kr += 1
+        self.slatepos = self._combo(clip, kr, "Slate position",
+                                    lss_render.SLATE_POSITIONS,
+                                    lss_render.SLATE_POSITIONS[0])
+        kr += 1
+        self.clip_scrim = self._entry(clip, kr, "Slate scrim",
+                                      f"{lss_render.VIDEO_SCRIM_DEFAULT:g}")
+        kr += 1
+        ttk.Label(clip, text="0 to 1, off by default. Raise it if the log "
+                             "warns the slate is hard to read.",
+                  foreground=MUTED).grid(row=kr, column=1, sticky="w", pady=(0, 8))
+        kr += 1
+        self.intro = self._entry(clip, kr, "Slate at the start",
+                                 f"{lss_render.SLATE_INTRO_DEFAULT:g}")
+        kr += 1
+        self.outro = self._entry(clip, kr, "Slate at the end",
+                                 f"{lss_render.SLATE_OUTRO_DEFAULT:g}")
+        kr += 1
+        self.thumbat = self._entry(clip, kr, "Thumbnail from", "0")
+        kr += 1
+        self.loophint = ttk.Label(clip, foreground=MUTED)
+        self.loophint.grid(row=kr, column=1, sticky="w", pady=(0, 6))
+        kr += 1
+
         # ---------- video: the encode only ----------
         vr = 0
         self.size = self._combo(video, vr, "Resolution",
@@ -425,14 +480,17 @@ class App:
                              command=self.start_render)
         self.go.pack(side="left")
         self.thumbonly = tk.BooleanVar(value=False)
-        ttk.Checkbutton(act, text="Thumbnail only — skip the video encode",
-                        variable=self.thumbonly).pack(side="left", padx=(16, 0))
+        self.thumbbox = ttk.Checkbutton(
+            act, text="Thumbnail only — skip the video encode",
+            variable=self.thumbonly)
+        self.thumbbox.pack(side="left", padx=(16, 0))
         self.thumbonly.trace_add("write", lambda *_a: self._thumbonly_changed())
         # Beside Thumbnail only because it answers the same question - what
         # comes out of this render - and that row is where those live.
         self.cover = tk.BooleanVar(value=False)
-        ttk.Checkbutton(act, text="Spotify cover — 3000×3000 square",
-                        variable=self.cover).pack(side="left", padx=(16, 0))
+        self.coverbox = ttk.Checkbutton(
+            act, text="Spotify cover — 3000×3000 square", variable=self.cover)
+        self.coverbox.pack(side="left", padx=(16, 0))
         self.vertical = tk.BooleanVar(value=False)
         self.verticalbox = ttk.Checkbutton(
             act, text="Shorts 9:16", variable=self.vertical,
@@ -467,6 +525,13 @@ class App:
         self._thumbonly_changed()
         self._vertical_changed()
         self._weather_changed()
+        # the audio field is a plain entry; a variable behind it is what lets
+        # the loop rows follow it however it is filled in - typed, pasted or
+        # chosen
+        self.audio_var = tk.StringVar()
+        self.audio.config(textvariable=self.audio_var)
+        self.audio_var.trace_add("write", lambda *_a: self._audio_changed())
+        self._audio_changed()
         self.say("Choose an audio file and fill in the slate, then press Render.")
         self.root.after(120, self.drain)
         self.root.after(400, self._check_updates)
@@ -524,13 +589,13 @@ class App:
             text="Renders Colours above plus each ticked colour — one "
                  "thumbnail each, in one folder."
             if on else "Tick Thumbnail only to render several colours at once.")
-        self._photo_apply()
+        self._mode_apply()
 
     def _weather_changed(self, _evt=None):
         """Shimmer is rain's, so it is offered only when the weather is rain."""
         self.shimmerbox.config(
             state="normal" if self.weather.get() == "rain" else "disabled")
-        self._photo_apply()
+        self._mode_apply()
 
     def _vertical_changed(self):
         """The badge is drawn on the vertical frame only, so it is typed only
@@ -540,7 +605,7 @@ class App:
         self.badgehint.config(
             text="  e.g. LIVE — blank for none" if on
             else "  tick Shorts to add one")
-        self._photo_apply()
+        self._mode_apply()
 
     def _photos_add(self):
         paths = filedialog.askopenfilenames(
@@ -572,14 +637,28 @@ class App:
         return ([self.photos.get(i) for i in range(self.photos.size())]
                 if self.photo_mode.get() else [])
 
-    def _photo_apply(self):
-        """Grey out everything a photo render has no use for.
+    def _mode(self):
+        """'photo', 'clip' or '' for a generated render. Never both: each
+        mode's tick greys the other's out while it is on."""
+        if getattr(self, "photo_mode", None) and self.photo_mode.get():
+            return "photo"
+        if getattr(self, "clip_mode", None) and self.clip_mode.get():
+            return "clip"
+        return ""
+
+    def _looping(self):
+        """A clip render with an audio file is the looped one - see 5h."""
+        return self._mode() == "clip" and bool(self.audio_var.get().strip())
+
+    def _mode_apply(self):
+        """Grey out everything a photo or clip render has no use for.
 
         Only ever disables. The per-style and per-palette greying is decided by
         _style_changed and _colors_changed, and this runs after them, so it
         must not hand anything back that they had just taken away.
         """
-        if not getattr(self, "photo_mode", None) or not self.photo_mode.get():
+        mode = self._mode()
+        if not mode:
             return
         for w in (self.style, self.detail, self.ahead, self.face, self.weather,
                   self.towers, self.scale, self.dyn, self.rows):
@@ -588,40 +667,70 @@ class App:
             w.config(state="disabled")
         self.variants.config(state="disabled")
         self.shimmerbox.config(state="disabled")
-        # a photo is framed 16:9 - there is no geometry for a tall frame
+        # a photo or a clip is framed 16:9 - no geometry for a tall frame
         self.verticalbox.config(state="disabled")
         self.badge.config(state="disabled")
+        if mode == "photo":
+            self.clipbox.config(state="disabled")
+            return
+        # what _video_check would refuse: the clip's own size is kept, it
+        # writes no cover, and there is no playhead to preview part-way along
+        self.photobox.config(state="disabled")
+        for w in (self.size, self.preview, self.coverbox):
+            w.config(state="disabled")
+        if not self._looping():            # a bare clip writes no thumbnail
+            self.thumbbox.config(state="disabled")
 
-    def _photo_mode_changed(self):
-        """The window refuses what lss_photo.check would refuse, rather than
-        letting a silhouette setting be chosen and rejected at Render - the
-        same bargain _style_changed already makes for the fill."""
-        on = bool(self.photo_mode.get())
-        self.scopebox.config(state="readonly" if on else "disabled")
-        if on:
-            self._photo_apply()
-        else:
-            # give everything back first, then let the handlers that own these
-            # tabs take away whatever the chosen style and palette do not reach
-            for w in (self.style, self.detail, self.ahead, self.face,
-                      self.weather, self.towers, self.scale, self.dyn,
-                      self.rows):
-                w.config(state="readonly")
-            for w in (self.blinkbox, self.starsbox, self.twinklebox,
-                      self.filledbox):
-                w.config(state="normal")
-            self.verticalbox.config(state="normal")
-            self._style_changed()
-            self._colors_changed()
-            self._thumbonly_changed()
-            self._vertical_changed()
-            self._weather_changed()
+    def _mode_changed(self):
+        """The window refuses what lss_photo.check and lss_render._video_check
+        would refuse, rather than letting a silhouette setting be chosen and
+        rejected at Render - the same bargain _style_changed already makes for
+        the fill."""
+        mode = self._mode()
+        self.scopebox.config(state="readonly" if mode == "photo" else "disabled")
+        if mode:
+            self._mode_apply()
+            return
+        # give everything back first, then let the handlers that own these
+        # tabs take away whatever the chosen style and palette do not reach
+        for w in (self.style, self.detail, self.ahead, self.face,
+                  self.weather, self.towers, self.scale, self.dyn,
+                  self.rows, self.size):
+            w.config(state="readonly")
+        for w in (self.blinkbox, self.starsbox, self.twinklebox,
+                  self.filledbox, self.verticalbox, self.coverbox,
+                  self.thumbbox, self.clipbox, self.preview):
+            w.config(state="normal")
+        if lss_photo is not None:
+            self.photobox.config(state="normal")
+        self._style_changed()
+        self._colors_changed()
+        self._thumbonly_changed()
+        self._vertical_changed()
+        self._weather_changed()
+
+    def _audio_changed(self):
+        """The loop rows schedule the slate across the recording, so they are
+        typed only when there is one. In clip mode the audio is also what makes
+        a thumbnail, which a bare clip render does not write."""
+        # the variable, not the entry: this runs inside the variable's write
+        # trace, before the entry has caught up with what was just written
+        on = bool(self.audio_var.get().strip())
+        for w in (self.intro, self.outro, self.thumbat):
+            w.config(state="normal" if on else "disabled")
+        self.loophint.config(
+            text="Minutes, 0 for none, or 'all'. The thumbnail is that many "
+                 "seconds into the clip." if on
+            else "Choose an audio file above to loop the clip to its length.")
+        if self._mode() == "clip":
+            self.thumbbox.config(state="normal" if on else "disabled")
+            self._mode_apply()
 
     def _picked_variants(self):
         """Selected colour presets, but only when they can actually be used -
         a selection made before the tick was cleared must not leak into a
         video render."""
-        if not self.thumbonly.get() or self.photo_mode.get():
+        if not self.thumbonly.get() or self._mode():
             return []
         return [self.variants.get(i) for i in self.variants.curselection()]
 
@@ -646,7 +755,7 @@ class App:
         self.stars.set(self._stars_want if ok else False)
         self.twinklebox.config(
             state="normal" if ok and self.stars.get() else "disabled")
-        self._photo_apply()
+        self._mode_apply()
 
     def _style_changed(self, _evt=None):
         """Grey out a treatment the chosen silhouette never reaches - blocks
@@ -665,7 +774,7 @@ class App:
         ok = s in lss_scene.FILLED_STYLES
         self.filledbox.config(state="normal" if ok else "disabled")
         self.filled.set(self._filled_want if ok else False)
-        self._photo_apply()
+        self._mode_apply()
 
     # ---------- widget helpers ----------
     def _entry(self, f, r, label, default=""):
@@ -744,6 +853,17 @@ class App:
                 stem = os.path.splitext(os.path.basename(p))[0].replace("_", " ")
                 self.place.insert(0, stem.title())
 
+    def pick_clip(self):
+        p = filedialog.askopenfilename(
+            title="Choose the video clip",
+            filetypes=[("Video", "*.mp4 *.mov *.m4v *.mkv *.avi"),
+                       ("All files", "*.*")])
+        if p:
+            self.clip.delete(0, "end"); self.clip.insert(0, p)
+            if not self.place.get().strip():
+                stem = os.path.splitext(os.path.basename(p))[0].replace("_", " ")
+                self.place.insert(0, stem.title())
+
     def pick_out(self):
         cur = self.outdir.get().strip()
         p = filedialog.askdirectory(title="Where should the files go?",
@@ -776,9 +896,11 @@ class App:
                 self.busy = False
                 self.bar["value"] = 1000
                 self.go.config(state="normal", text="Render")
-                thumbs = payload.get("thumbnails") or [payload["thumbnail"]]
+                # a bare clip render writes no still at all
+                thumbs = payload.get("thumbnails") or (
+                    [payload["thumbnail"]] if payload.get("thumbnail") else [])
                 if payload.get("video"):
-                    what = "video and thumbnail"
+                    what = "video and thumbnail" if thumbs else "video"
                 elif len(thumbs) > 1:
                     what = "%d thumbnails" % len(thumbs)
                 else:
@@ -811,7 +933,16 @@ class App:
 
     # ---------- render ----------
     def validate(self):
-        if not os.path.isfile(self.audio.get().strip()):
+        audio = self.audio.get().strip()
+        if self._mode() == "clip":
+            # the one mode where the recording is optional - it is what asks
+            # for a looped render rather than one pass over the clip
+            if not os.path.isfile(self.clip.get().strip()):
+                return "Clip mode is on: choose a video clip that exists."
+            if audio and not os.path.isfile(audio):
+                return ("Choose an audio file that exists, or clear it to "
+                        "render the clip once with the slate throughout.")
+        elif not os.path.isfile(audio):
             return "Choose an audio file that exists."
         for w, n in ((self.place, "Place"), (self.city, "City"), (self.cond, "Conditions")):
             if not w.get().strip():
@@ -833,7 +964,43 @@ class App:
                 return "Photo mode is on but no photographs have been added."
             if self._photo_numbers()[2]:
                 return self._photo_numbers()[2]
+        if self._mode() == "clip":
+            return self._clip_numbers()[1]
         return self._preview_frac()[1]
+
+    def _clip_numbers(self):
+        """(numbers, error) for the Clip tab's typed fields, checked here for
+        the reason _photo_numbers gives. The loop rows are read only when there
+        is an audio file to loop to - they are greyed otherwise."""
+        try:
+            sc = float(self.clip_scrim.get().strip())
+        except ValueError:
+            return {}, ("Slate scrim must be a number between 0 and 1, not "
+                        f"'{self.clip_scrim.get().strip()}'.")
+        if not 0.0 <= sc <= 1.0:
+            return {}, "Slate scrim must be between 0 and 1."
+        out = {"scrim": sc}
+        if not self._looping():
+            return out, None
+        for w, name, key in ((self.intro, "Slate at the start", "slate_intro"),
+                             (self.outro, "Slate at the end", "slate_outro")):
+            s = w.get().strip() or "0"
+            if s.lower() not in ("all", "always"):
+                try:
+                    if float(s) < 0:
+                        return {}, f"{name} cannot be negative."
+                except ValueError:
+                    return {}, (f"{name} must be a number of minutes or "
+                                f"'all', not '{s}'.")
+            out[key] = s
+        try:
+            out["thumb_at"] = float(self.thumbat.get().strip() or "0")
+        except ValueError:
+            return {}, ("Thumbnail from must be a number of seconds, not "
+                        f"'{self.thumbat.get().strip()}'.")
+        if out["thumb_at"] < 0:
+            return {}, "Thumbnail from cannot be negative."
+        return out, None
 
     def _photo_numbers(self):
         """(interval, scrim, error). Both are typed, so both are checked here
@@ -963,7 +1130,12 @@ class App:
                     return
         scene = lss_presets.series_scene(self.series.get(), PRESETS)
         frac = self._preview_frac()[0]
-        if self.photo_mode.get():
+        clip = self._mode() == "clip"
+        if clip:
+            # every control _video_check refuses is greyed out, and the ticks
+            # that can stay ticked behind the grey are masked in cfg below
+            err = None
+        elif self.photo_mode.get():
             # only what the window can still get wrong: every silhouette
             # control is greyed out in photo mode, so it cannot be asked for
             err = lss_photo.check({"progress": frac,
@@ -1020,14 +1192,35 @@ class App:
             "scrim": self._photo_numbers()[1],
             "thumb_only": bool(self.thumbonly.get()),
             "cover": bool(self.cover.get()),
-            "vertical": bool(self.vertical.get()) and not self.photo_mode.get(),
+            "vertical": bool(self.vertical.get()) and not self._mode(),
             "badge": (self.badge.get().strip().upper()
-                      if self.vertical.get() and not self.photo_mode.get()
+                      if self.vertical.get() and not self._mode()
                       else ""),
             "slate_mono": bool(self.mono.get()),
             "number_color": self.cust_num.get().strip().upper(),
             "outname": self.outname.get().strip(),
         }
+        if clip:
+            # The renderer's --video, built the way main() builds it. Only what
+            # the slate SAYS and what colour it is survives into this mode, so
+            # everything a greyed-out control might still hold is put back to
+            # what the CLI would have sent.
+            nums = self._clip_numbers()[0]
+            cfg.update({
+                "audio": self.audio.get().strip(),   # blank = one pass
+                "video": self.clip.get().strip(),
+                "slate_time": lss_render.slate_clock(self.start.get()),
+                "slate_position": self.slatepos.get(),
+                "scrim": nums["scrim"],
+                "slate_intro": nums.get("slate_intro",
+                                        str(lss_render.SLATE_INTRO_DEFAULT)),
+                "slate_outro": nums.get("slate_outro",
+                                        str(lss_render.SLATE_OUTRO_DEFAULT)),
+                "thumb_at": nums.get("thumb_at", 0.0),
+                "thumb_only": bool(self.thumbonly.get()) and self._looping(),
+                "progress": 1.0, "cover": False, "variants": [],
+                "stars": False, "cycle": [], "cycle_minutes": 0.0,
+            })
         self.busy = True
         self.go.config(state="disabled", text="Rendering…")
         self.log.delete("1.0", "end")
@@ -1042,6 +1235,13 @@ class App:
                 progress=lambda s: self.q.put(("log", s)),
                 on_progress=lambda fr, eta: self.q.put(("prog", (fr, eta))))
             self.q.put(("done", res))
+        except SystemExit as e:
+            # the renderer's refusals - a portrait clip, a missing file, a
+            # slate schedule longer than the audio. SystemExit is not an
+            # Exception, and uncaught it ends this thread silently and leaves
+            # the window saying Rendering… forever. Its message is already
+            # written for a person, so it goes out without a traceback.
+            self.q.put(("error", str(e) or "The render stopped."))
         except Exception:
             self.q.put(("error", traceback.format_exc(limit=3)))
 

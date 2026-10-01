@@ -30,7 +30,7 @@ Open a fresh window afterward. Without it the app falls back to Arial.
 ## The window
 
 The audio file and the output folder sit at the top, and **Render**, **Thumbnail only** and
-**Preview at** sit at the bottom, always visible. Everything else is on five tabs, grouped by what
+**Preview at** sit at the bottom, always visible. Everything else is on seven tabs, grouped by what
 it decides:
 
 | Tab | What it decides |
@@ -40,6 +40,8 @@ it decides:
 | **Colour** | occasion, colours, custom colours, and the Compare list |
 | **Shape** | how loudness becomes height — scaling, dynamics, tower width, stacked rows |
 | **Video** | the encode only — resolution and chroma. Thumbnail only skips all of it |
+| **Photo** | photographs instead of a generated silhouette — see [Photo backgrounds](#photo-backgrounds) |
+| **Clip** | the slate burned onto your own footage — see [The slate over your own footage](#the-slate-over-your-own-footage) |
 
 `lss_render.py --help` is grouped the same way.
 
@@ -825,7 +827,10 @@ py lss_studio\lss_render.py --video "C:\clips\IMG_3187.MOV" --slate-time 18:30 ^
 it. There is **no audio argument**: the camera audio is
 stripped and the real audio gets muxed in later.
 
-Command line only for now; there is no tab for it in the window.
+In the window it is the **Clip** tab: tick *Burn the slate onto my own video clip*, choose the clip,
+and the slate shows the **Start time** from the Slate tab, frozen. Leave the audio file at the top
+blank for this one-pass render. Look, Shape, Resolution, Preview at and the cover grey out, since
+none of them mean anything over footage.
 
 ### What it preserves, and what it refuses
 
@@ -948,7 +953,9 @@ py lss_studio\lss_render.py "Downtown Phoenix.flac" ^
 ```
 
 The audio file is the switch. `--video` on its own is still one pass over one clip with the slate on
-throughout, unchanged.
+throughout, unchanged. In the window it is the same switch: choose an audio file at the top while
+the Clip tab is ticked, and its **Slate at the start**, **Slate at the end** and **Thumbnail from**
+rows come alive — they stay greyed while the audio field is blank.
 
 ```
 --slate-intro MINUTES|all   default 2   (0 turns it off)
